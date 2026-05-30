@@ -2,7 +2,7 @@
   "id": "FEAT-001",
   "type": "fix",
   "description": "Fix all CRUD, database, and utility layer bugs (BUG-002 through BUG-008, BUG-012, BUG-013). These are the foundational data-layer fixes that other features depend on.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "STEP 1 - BUG-006 & BUG-008: In bot/utils/ticket_generator.py: (a) Replace 'import random' and 'import string' with 'import secrets' and 'import string'. Change generate_pin() to use secrets.choice(string.digits) instead of random.choices. (b) In generate_security_hash(), change [:16] to [:32] to use longer hash. Remove the unused 'timestamp' parameter from the function signature.",
     "STEP 2 - BUG-007: In bot/database/crud.py create_ticket() function: Wrap the PIN generation and ticket creation in a retry loop (up to 5 attempts). On IntegrityError (PIN collision), rollback and regenerate PIN. Import IntegrityError if not already imported.",
@@ -31,5 +31,5 @@
     "Run: python -c \"from bot.database.crud import get_top_users, mark_attendance, register_user_for_event, verify_and_checkin, create_ticket; print('All imports OK')\""
   ],
   "blocked_reason": null,
-  "findings": ""
+  "findings": "All changes compile and import correctly. BOT_TOKEN env var required for imports (set BOT_TOKEN=test_token SUPER_ADMIN_ID=12345 for testing). pyenv global 3.11.15 needed to activate Python. pip install ran successfully under OPEN_INTERNET. The verify_and_checkin function already had ticket.is_used logic, so BUG-003 fix (ATTENDED check) was added just above the check-in block."
 }
