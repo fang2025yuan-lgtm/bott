@@ -3,9 +3,19 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from bot.database.crud import get_active_events, get_event_registrations, mark_attendance, create_event, get_user_by_tg_id, create_club, promote_user, get_event_by_id
-from bot.database.models import RegStatus
-from bot.keyboards.menus import admin_events_keyboard, attendance_keyboard
+from bot.database.crud import (
+    get_active_events, get_event_registrations, mark_attendance, create_event,
+    get_user_by_tg_id, create_club, promote_user, get_event_by_id,
+    get_all_users, get_all_events, update_event, cancel_event,
+    update_user_club, update_user_points, get_club_by_id, delete_club,
+    get_all_clubs, get_users_count, get_events_count, get_clubs_count
+)
+from bot.database.models import RegStatus, EventStatus
+from bot.keyboards.menus import (
+    admin_events_keyboard, attendance_keyboard,
+    super_admin_menu_keyboard, user_management_keyboard,
+    event_management_keyboard, sa_users_pagination_keyboard
+)
 from bot.config import SUPER_ADMIN_ID
 from datetime import datetime
 import html
@@ -28,6 +38,18 @@ class ClubState(StatesGroup):
 class PromoteState(StatesGroup):
     waiting_for_id = State()
 
+class SAEditUserState(StatesGroup):
+    waiting_for_tg_id = State()
+    waiting_for_club_id = State()
+    waiting_for_points = State()
+    waiting_for_role = State()
+
+class SAEditEventState(StatesGroup):
+    waiting_for_event_id = State()
+    waiting_for_title = State()
+    waiting_for_points = State()
+    waiting_for_status = State()
+
 async def check_admin(user_id: int, allowed_roles: list, club_id_needed: int = None):
     user = await get_user_by_tg_id(user_id)
     if not user or user.role.value not in allowed_roles:
@@ -44,8 +66,15 @@ async def super_admin_panel(message: Message):
     if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
     text = "⚙️ <b>SUPER ADMIN PANEL</b>\n\nQuyidagi komandalardan foydalaning:\n"
     text += "<code>/add_club</code> - Yangi klub ochish\n"
-    text += "<code>/promote</code> - Foydalanuvchiga rahbarlik berish (VP/President)"
-    await message.answer(text, parse_mode="HTML")
+    text += "<code>/promote</code> - Foydalanuvchiga rahbarlik berish (VP/President)\n"
+    text += "<code>/users</code> - Barcha foydalanuvchilar ro'yxati\n"
+    text += "<code>/user_info &lt;tg_id&gt;</code> - Foydalanuvchi haqida ma'lumot\n"
+    text += "<code>/clubs</code> - Barcha klublar ro'yxati\n"
+    text += "<code>/events_all</code> - Barcha tadbirlar ro'yxati\n"
+    text += "<code>/edit_user &lt;tg_id&gt;</code> - Foydalanuvchini tahrirlash\n"
+    text += "<code>/edit_event &lt;event_id&gt;</code> - Tadbirni tahrirlash\n"
+    text += "<code>/delete_event &lt;event_id&gt;</code> - Tadbirni bekor qilish\n"
+    await message.answer(text, parse_mode="HTML", reply_markup=super_admin_menu_keyboard())
 
 @admin_router.message(Command("add_club"))
 async def add_club_cmd(message: Message, state: FSMContext):
@@ -345,3 +374,524 @@ async def add_event_check_in(message: Message, state: FSMContext):
     else:
         await message.answer(f"❌ Xatolik: {msg}")
     await state.clear()
+
+
+# =============================================
+# SUPER ADMIN HANDLERS
+# =============================================
+
+@admin_router.message(F.text == "📊 Statistika")
+async def show_statistics(message: Message):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    users_count = await get_users_count()
+    events_count = await get_events_count()
+    clubs_count = await get_clubs_count()
+    text = (
+        "📊 <b>Statistika</b>\n\n"
+        f"👥 Jami foydalanuvchilar: <b>{users_count}</b>\n"
+        f"📅 Jami tadbirlar: <b>{events_count}</b>\n"
+        f"🏢 Jami klublar: <b>{clubs_count}</b>"
+    )
+    await message.answer(text, parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data == "sa_stats")
+async def sa_stats_callback(call: CallbackQuery):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    users_count = await get_users_count()
+    events_count = await get_events_count()
+    clubs_count = await get_clubs_count()
+    text = (
+        "📊 <b>Statistika</b>\n\n"
+        f"👥 Jami foydalanuvchilar: <b>{users_count}</b>\n"
+        f"📅 Jami tadbirlar: <b>{events_count}</b>\n"
+        f"🏢 Jami klublar: <b>{clubs_count}</b>"
+    )
+    await call.message.answer(text, parse_mode="HTML")
+
+
+# --- /users command and pagination ---
+@admin_router.message(Command("users"))
+async def cmd_users(message: Message):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    await _show_users_page(message, page=1)
+
+
+@admin_router.callback_query(F.data == "sa_users")
+async def sa_users_callback(call: CallbackQuery):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    await _show_users_page(call.message, page=1)
+
+
+@admin_router.callback_query(F.data.startswith("sa_users_page_"))
+async def sa_users_page_callback(call: CallbackQuery):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    page = int(call.data.split("_")[-1])
+    await _show_users_page(call.message, page=page)
+
+
+async def _show_users_page(message: Message, page: int):
+    per_page = 20
+    offset = (page - 1) * per_page
+    users = await get_all_users(limit=per_page + 1, offset=offset)
+    has_next = len(users) > per_page
+    users = users[:per_page]
+
+    if not users:
+        return await message.answer("Foydalanuvchilar topilmadi.")
+
+    text = f"👥 <b>Foydalanuvchilar (sahifa {page}):</b>\n\n"
+    for i, user in enumerate(users, start=offset + 1):
+        username = f"@{html.escape(user.username)}" if user.username else "---"
+        text += (
+            f"{i}. {html.escape(user.full_name)} | {username}\n"
+            f"   ID: <code>{user.telegram_id}</code> | 🎯 {user.total_points} ball | {user.role.value}\n"
+        )
+
+    await message.answer(text, parse_mode="HTML", reply_markup=sa_users_pagination_keyboard(page, has_next))
+
+
+# --- /user_info command ---
+@admin_router.message(Command("user_info"))
+async def cmd_user_info(message: Message):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    parts = message.text.split()
+    if len(parts) < 2:
+        return await message.answer("Format: <code>/user_info &lt;telegram_id&gt;</code>", parse_mode="HTML")
+    try:
+        target_tg_id = int(parts[1])
+    except ValueError:
+        return await message.answer("Telegram ID raqam bo'lishi kerak!")
+
+    user = await get_user_by_tg_id(target_tg_id)
+    if not user:
+        return await message.answer("Foydalanuvchi topilmadi.")
+
+    from bot.database.crud import get_user_results
+    points, attended = await get_user_results(target_tg_id)
+    club_name = "---"
+    if user.club_id:
+        club = await get_club_by_id(user.club_id)
+        if club:
+            club_name = html.escape(club.club_name)
+
+    text = (
+        f"👤 <b>Foydalanuvchi ma'lumotlari</b>\n\n"
+        f"📛 Ism: {html.escape(user.full_name)}\n"
+        f"🆔 Telegram ID: <code>{user.telegram_id}</code>\n"
+        f"👤 Username: @{html.escape(user.username) if user.username else '---'}\n"
+        f"🏢 Klub: {club_name}\n"
+        f"👑 Rol: {user.role.value}\n"
+        f"🎯 Ballar: {user.total_points}\n"
+        f"🏅 Status: {user.user_status.value}\n"
+        f"✅ Qatnashgan tadbirlar: {attended}\n"
+        f"📅 Ro'yxatdan o'tgan: {user.created_at.strftime('%d.%m.%Y') if user.created_at else '---'}"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=user_management_keyboard(user.telegram_id))
+
+
+# --- /edit_user command ---
+@admin_router.message(Command("edit_user"))
+async def cmd_edit_user(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Foydalanuvchining Telegram ID sini kiriting (Bekor qilish: /cancel):")
+        await state.set_state(SAEditUserState.waiting_for_tg_id)
+        return
+    try:
+        target_tg_id = int(parts[1])
+    except ValueError:
+        return await message.answer("Telegram ID raqam bo'lishi kerak!")
+
+    user = await get_user_by_tg_id(target_tg_id)
+    if not user:
+        return await message.answer("Foydalanuvchi topilmadi.")
+    await message.answer(
+        f"Foydalanuvchi: {html.escape(user.full_name)} (ID: {user.telegram_id})\nQuyidagilardan birini tanlang:",
+        parse_mode="HTML",
+        reply_markup=user_management_keyboard(user.telegram_id)
+    )
+
+
+@admin_router.message(SAEditUserState.waiting_for_tg_id)
+async def sa_edit_user_tg_id(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    try:
+        target_tg_id = int(message.text.strip())
+    except ValueError:
+        return await message.answer("Telegram ID raqam bo'lishi kerak!")
+    user = await get_user_by_tg_id(target_tg_id)
+    if not user:
+        await state.clear()
+        return await message.answer("Foydalanuvchi topilmadi.")
+    await state.clear()
+    await message.answer(
+        f"Foydalanuvchi: {html.escape(user.full_name)}\nQuyidagilardan birini tanlang:",
+        parse_mode="HTML",
+        reply_markup=user_management_keyboard(user.telegram_id)
+    )
+
+
+# --- User management callbacks ---
+@admin_router.callback_query(F.data.startswith("sa_uchg_club_"))
+async def sa_user_change_club(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    tg_id = int(call.data.split("_")[-1])
+    await state.update_data(target_tg_id=tg_id)
+    await state.set_state(SAEditUserState.waiting_for_club_id)
+    await call.message.answer("Yangi klub ID raqamini kiriting (Bekor qilish: /cancel):")
+
+
+@admin_router.message(SAEditUserState.waiting_for_club_id)
+async def sa_user_set_club(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    try:
+        club_id = int(message.text.strip())
+    except ValueError:
+        return await message.answer("Klub ID raqam bo'lishi kerak!")
+    data = await state.get_data()
+    target_tg_id = data['target_tg_id']
+    success, msg = await update_user_club(target_tg_id, club_id)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+    await state.clear()
+
+
+@admin_router.callback_query(F.data.startswith("sa_uchg_pts_"))
+async def sa_user_change_points(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    tg_id = int(call.data.split("_")[-1])
+    await state.update_data(target_tg_id=tg_id)
+    await state.set_state(SAEditUserState.waiting_for_points)
+    await call.message.answer("Yangi ball sonini kiriting (Bekor qilish: /cancel):")
+
+
+@admin_router.message(SAEditUserState.waiting_for_points)
+async def sa_user_set_points(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    try:
+        points = int(message.text.strip())
+        if points < 0:
+            return await message.answer("Ball manfiy bo'lishi mumkin emas!")
+    except ValueError:
+        return await message.answer("Ball raqam bo'lishi kerak!")
+    data = await state.get_data()
+    target_tg_id = data['target_tg_id']
+    success, msg = await update_user_points(target_tg_id, points)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+    await state.clear()
+
+
+@admin_router.callback_query(F.data.startswith("sa_uchg_role_"))
+async def sa_user_change_role(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    tg_id = int(call.data.split("_")[-1])
+    await state.update_data(target_tg_id=tg_id)
+    await state.set_state(SAEditUserState.waiting_for_role)
+    await call.message.answer("Yangi rolni kiriting (USER, VP, PRESIDENT). Bekor qilish: /cancel")
+
+
+@admin_router.message(SAEditUserState.waiting_for_role)
+async def sa_user_set_role(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    data = await state.get_data()
+    target_tg_id = data['target_tg_id']
+    role_name = message.text.strip().upper()
+    if role_name not in ['USER', 'VP', 'PRESIDENT']:
+        return await message.answer("Faqat USER, VP, PRESIDENT rollari mumkin!")
+    success, msg = await promote_user(target_tg_id, role_name)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+    await state.clear()
+
+
+# --- /edit_event command ---
+@admin_router.message(Command("edit_event"))
+async def cmd_edit_event(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("Tadbir ID raqamini kiriting (Bekor qilish: /cancel):")
+        await state.set_state(SAEditEventState.waiting_for_event_id)
+        return
+    try:
+        event_id = int(parts[1])
+    except ValueError:
+        return await message.answer("Event ID raqam bo'lishi kerak!")
+    event = await get_event_by_id(event_id)
+    if not event:
+        return await message.answer("Tadbir topilmadi.")
+    text = (
+        f"📅 <b>{html.escape(event.title)}</b>\n"
+        f"ID: {event.id} | Status: {event.status.value}\n"
+        f"Reg ball: {event.registration_points} | Att ball: {event.attendance_points}\n"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=event_management_keyboard(event.id))
+
+
+@admin_router.message(SAEditEventState.waiting_for_event_id)
+async def sa_edit_event_id(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    try:
+        event_id = int(message.text.strip())
+    except ValueError:
+        return await message.answer("Event ID raqam bo'lishi kerak!")
+    event = await get_event_by_id(event_id)
+    if not event:
+        await state.clear()
+        return await message.answer("Tadbir topilmadi.")
+    await state.clear()
+    text = (
+        f"📅 <b>{html.escape(event.title)}</b>\n"
+        f"ID: {event.id} | Status: {event.status.value}\n"
+        f"Reg ball: {event.registration_points} | Att ball: {event.attendance_points}\n"
+    )
+    await message.answer(text, parse_mode="HTML", reply_markup=event_management_keyboard(event.id))
+
+
+# --- Event management callbacks ---
+@admin_router.callback_query(F.data.startswith("sa_ev_title_"))
+async def sa_event_change_title(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    event_id = int(call.data.split("_")[-1])
+    await state.update_data(target_event_id=event_id)
+    await state.set_state(SAEditEventState.waiting_for_title)
+    await call.message.answer("Yangi sarlavhani kiriting (Bekor qilish: /cancel):")
+
+
+@admin_router.message(SAEditEventState.waiting_for_title)
+async def sa_event_set_title(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    data = await state.get_data()
+    event_id = data['target_event_id']
+    success, msg = await update_event(event_id, title=message.text.strip())
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+    await state.clear()
+
+
+@admin_router.callback_query(F.data.startswith("sa_ev_pts_"))
+async def sa_event_change_points(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    event_id = int(call.data.split("_")[-1])
+    await state.update_data(target_event_id=event_id)
+    await state.set_state(SAEditEventState.waiting_for_points)
+    await call.message.answer("Yangi ballarni kiriting (format: reg_ball att_ball, masalan: 2 10). Bekor qilish: /cancel")
+
+
+@admin_router.message(SAEditEventState.waiting_for_points)
+async def sa_event_set_points(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    try:
+        parts = message.text.strip().split()
+        reg_pts = int(parts[0])
+        att_pts = int(parts[1])
+        if reg_pts < 0 or att_pts < 0:
+            return await message.answer("Ballar manfiy bo'lishi mumkin emas!")
+    except (ValueError, IndexError):
+        return await message.answer("Format: reg_ball att_ball (masalan: 2 10)")
+    data = await state.get_data()
+    event_id = data['target_event_id']
+    success, msg = await update_event(event_id, registration_points=reg_pts, attendance_points=att_pts)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+    await state.clear()
+
+
+@admin_router.callback_query(F.data.startswith("sa_ev_status_"))
+async def sa_event_change_status(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    event_id = int(call.data.split("_")[-1])
+    await state.update_data(target_event_id=event_id)
+    await state.set_state(SAEditEventState.waiting_for_status)
+    await call.message.answer("Yangi holatni kiriting (ACTIVE, COMPLETED, CANCELLED). Bekor qilish: /cancel")
+
+
+@admin_router.message(SAEditEventState.waiting_for_status)
+async def sa_event_set_status(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    status_text = message.text.strip().upper()
+    if status_text not in ['ACTIVE', 'COMPLETED', 'CANCELLED']:
+        return await message.answer("Faqat ACTIVE, COMPLETED, CANCELLED mumkin!")
+    data = await state.get_data()
+    event_id = data['target_event_id']
+    new_status = EventStatus[status_text]
+    success, msg = await update_event(event_id, status=new_status)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+    await state.clear()
+
+
+@admin_router.callback_query(F.data.startswith("sa_ev_cancel_"))
+async def sa_event_cancel(call: CallbackQuery):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    event_id = int(call.data.split("_")[-1])
+    success, msg = await cancel_event(event_id)
+    if success:
+        await call.message.answer(f"✅ {msg}")
+    else:
+        await call.message.answer(f"❌ {msg}")
+
+
+# --- /delete_event command ---
+@admin_router.message(Command("delete_event"))
+async def cmd_delete_event(message: Message):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    parts = message.text.split()
+    if len(parts) < 2:
+        return await message.answer("Format: <code>/delete_event &lt;event_id&gt;</code>", parse_mode="HTML")
+    try:
+        event_id = int(parts[1])
+    except ValueError:
+        return await message.answer("Event ID raqam bo'lishi kerak!")
+    success, msg = await cancel_event(event_id)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
+
+
+# --- /events_all command ---
+@admin_router.message(Command("events_all"))
+async def cmd_events_all(message: Message):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    events = await get_all_events(limit=20, offset=0)
+    if not events:
+        return await message.answer("Tadbirlar topilmadi.")
+    text = "📅 <b>Barcha tadbirlar:</b>\n\n"
+    for event in events:
+        status_emoji = {"ACTIVE": "🟢", "COMPLETED": "✅", "CANCELLED": "❌"}.get(event.status.value, "⚪")
+        text += (
+            f"{status_emoji} <b>{html.escape(event.title)}</b> (ID: {event.id})\n"
+            f"   Status: {event.status.value} | Reg: {event.registration_points} | Att: {event.attendance_points}\n"
+        )
+    await message.answer(text, parse_mode="HTML")
+
+
+@admin_router.callback_query(F.data == "sa_events")
+async def sa_events_callback(call: CallbackQuery):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    events = await get_all_events(limit=20, offset=0)
+    if not events:
+        return await call.message.answer("Tadbirlar topilmadi.")
+    text = "📅 <b>Barcha tadbirlar:</b>\n\n"
+    for event in events:
+        status_emoji = {"ACTIVE": "🟢", "COMPLETED": "✅", "CANCELLED": "❌"}.get(event.status.value, "⚪")
+        text += (
+            f"{status_emoji} <b>{html.escape(event.title)}</b> (ID: {event.id})\n"
+            f"   Status: {event.status.value} | Reg: {event.registration_points} | Att: {event.attendance_points}\n"
+        )
+    await call.message.answer(text, parse_mode="HTML")
+
+
+# --- /clubs command ---
+@admin_router.message(Command("clubs"))
+async def cmd_clubs(message: Message):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return
+    await _show_clubs(message)
+
+
+@admin_router.callback_query(F.data == "sa_clubs")
+async def sa_clubs_callback(call: CallbackQuery):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    await _show_clubs(call.message)
+
+
+async def _show_clubs(message: Message):
+    clubs = await get_all_clubs()
+    if not clubs:
+        return await message.answer("Klublar topilmadi.")
+    text = "🏢 <b>Barcha klublar:</b>\n\n"
+    for club in clubs:
+        member_count = len(club.users) if club.users else 0
+        text += f"🏢 <b>{html.escape(club.club_name)}</b> (ID: {club.id})\n   A'zolar: {member_count}\n"
+    await message.answer(text, parse_mode="HTML")
+
+
+# --- sa_edit_user and sa_edit_event callbacks from inline keyboard ---
+@admin_router.callback_query(F.data == "sa_edit_user")
+async def sa_edit_user_callback(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    await call.message.answer("Foydalanuvchining Telegram ID sini kiriting (Bekor qilish: /cancel):")
+    await state.set_state(SAEditUserState.waiting_for_tg_id)
+
+
+@admin_router.callback_query(F.data == "sa_edit_event")
+async def sa_edit_event_callback(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+    await call.message.answer("Tadbir ID raqamini kiriting (Bekor qilish: /cancel):")
+    await state.set_state(SAEditEventState.waiting_for_event_id)

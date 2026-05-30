@@ -409,3 +409,117 @@ async def update_user_status_if_needed(user_id: int):
         if user.user_status != new_status:
             user.user_status = new_status
             await session.commit()
+
+
+# --- SUPER ADMIN CRUD FUNCTIONS ---
+
+async def get_all_users(limit: int = 20, offset: int = 0):
+    """Barcha foydalanuvchilarni sahifalab olish"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).order_by(desc(User.total_points)).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+
+async def get_all_events(limit: int = 20, offset: int = 0):
+    """Barcha tadbirlarni sahifalab olish (holati bo'yicha filter yo'q)"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Event).order_by(desc(Event.id)).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+
+async def update_event(event_id: int, **kwargs):
+    """Tadbir maydonlarini yangilash"""
+    async with AsyncSessionLocal() as session:
+        event = await session.get(Event, event_id)
+        if not event:
+            return False, "Tadbir topilmadi"
+        for key, value in kwargs.items():
+            if hasattr(event, key):
+                setattr(event, key, value)
+        await session.commit()
+        return True, "Tadbir yangilandi"
+
+
+async def cancel_event(event_id: int):
+    """Tadbirni bekor qilish (CANCELLED holatiga o'tkazish)"""
+    async with AsyncSessionLocal() as session:
+        event = await session.get(Event, event_id)
+        if not event:
+            return False, "Tadbir topilmadi"
+        event.status = EventStatus.CANCELLED
+        await session.commit()
+        return True, "Tadbir bekor qilindi"
+
+
+async def update_user_club(telegram_id: int, club_id: int):
+    """Foydalanuvchining klubini o'zgartirish"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalars().first()
+        if not user:
+            return False, "Foydalanuvchi topilmadi"
+        # Klubni tekshirish
+        club = await session.get(Club, club_id)
+        if not club:
+            return False, "Klub topilmadi"
+        user.club_id = club_id
+        await session.commit()
+        return True, f"Foydalanuvchi '{club.club_name}' klubiga o'tkazildi"
+
+
+async def update_user_points(telegram_id: int, points: int):
+    """Foydalanuvchi ballarini o'rnatish va statusni qayta hisoblash"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalars().first()
+        if not user:
+            return False, "Foydalanuvchi topilmadi"
+        user.total_points = points
+        user.user_status = calculate_user_status(points)
+        await session.commit()
+        return True, f"Ballar {points} ga o'rnatildi. Status: {user.user_status.value}"
+
+
+async def get_club_by_id(club_id: int):
+    """Klubni ID bo'yicha olish"""
+    async with AsyncSessionLocal() as session:
+        return await session.get(Club, club_id)
+
+
+async def delete_club(club_id: int):
+    """Klubni o'chirish"""
+    async with AsyncSessionLocal() as session:
+        club = await session.get(Club, club_id)
+        if not club:
+            return False, "Klub topilmadi"
+        await session.delete(club)
+        await session.commit()
+        return True, f"'{club.club_name}' klubi o'chirildi"
+
+
+async def get_users_count():
+    """Jami foydalanuvchilar sonini olish"""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func
+        result = await session.execute(select(func.count(User.id)))
+        return result.scalar() or 0
+
+
+async def get_events_count():
+    """Jami tadbirlar sonini olish"""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func
+        result = await session.execute(select(func.count(Event.id)))
+        return result.scalar() or 0
+
+
+async def get_clubs_count():
+    """Jami klublar sonini olish"""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func
+        result = await session.execute(select(func.count(Club.id)))
+        return result.scalar() or 0
