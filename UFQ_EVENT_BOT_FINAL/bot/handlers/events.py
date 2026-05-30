@@ -1,10 +1,12 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
-from bot.database.crud import get_active_events, register_user_for_event
+from aiogram.types import Message, CallbackQuery, BufferedInputFile
+from bot.database.crud import get_active_events, register_user_for_event, create_ticket
 from bot.keyboards.menus import event_registration_keyboard
 import html
+import logging
 
 events_router = Router()
+logger = logging.getLogger(__name__)
 
 @events_router.message(F.text == "📅 Faol Tadbirlar")
 async def show_active_events(message: Message):
@@ -35,10 +37,36 @@ async def register_to_event(call: CallbackQuery):
     except (ValueError, IndexError):
         return await call.answer("Tadbir ID noto'g'ri", show_alert=True)
     
+    # Ro'yxatdan o'tish
     success, msg = await register_user_for_event(call.from_user.id, event_id)
     
     if success:
         await call.message.edit_reply_markup(reply_markup=None)
-        await call.answer("✅ Ro'yxatdan o'tdingiz!", show_alert=True)
+        await call.answer("✅ Ro'yxatdan o'tdingiz!", show_alert=False)
+        
+        # Chipta generatsiya qilish
+        try:
+            ticket, ticket_image = await create_ticket(call.from_user.id, event_id)
+            
+            if ticket and ticket_image:
+                # Chiptani yuborish
+                photo = BufferedInputFile(ticket_image.read(), filename="ticket.png")
+                await call.message.answer_photo(
+                    photo=photo,
+                    caption=(
+                        "🎟 <b>Sizning chiptangiz tayyor!</b>\n\n"
+                        "Bu chiptani tadbir kirishida ko'rsating.\n"
+                        "QR-kodni admin skanerlaydi va sizga ball beriladi.\n\n"
+                        f"📌 PIN-kod: <code>{ticket.ticket_pin}</code>\n\n"
+                        "<i>Chiptani yo'qotmang! Agar yo'qotilsa, botga /mytickets yozib qayta yuklab olishingiz mumkin.</i>"
+                    ),
+                    parse_mode="HTML"
+                )
+            else:
+                logger.error(f"Chipta yaratishda xatolik: {ticket_image}")
+                await call.message.answer("✅ Ro'yxatdan o'tdingiz, lekin chiptani generatsiya qilishda xatolik yuz berdi.")
+        except Exception as e:
+            logger.error(f"Chipta generatsiya xatoligi: {e}")
+            await call.message.answer("✅ Ro'yxatdan o'tdingiz!")
     else:
         await call.answer(msg, show_alert=True)

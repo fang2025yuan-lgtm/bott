@@ -1,8 +1,14 @@
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
-from bot.database.models import User, Club, Event, Registration, EventStatus, RegStatus, RoleEnum
+from bot.database.models import User, Club, Event, Registration, Ticket, EventStatus, RegStatus, RoleEnum, UserStatus
 from bot.database.db import AsyncSessionLocal
+from bot.utils.ticket_generator import generate_pin, generate_security_hash, generate_qr_data, generate_ticket_image
+from bot.utils.status_manager import calculate_user_status
 from sqlalchemy import desc
+from datetime import datetime
+import logging
+
+logger = logging.getLogger(__name__)
 
 # --- USER FUNCTIONS ---
 async def get_user_by_tg_id(telegram_id: int):
@@ -201,3 +207,157 @@ async def promote_user(target_tg_id: int, role_name: str):
             return True, f"{user.full_name} endi {role_name}!"
         except KeyError:
             return False, "Noto'g'ri lavozim nomi."
+
+
+
+# --- TICKET FUNCTIONS ---
+async def create_ticket(user_tg_id: int, event_id: int):
+    """
+    Foydalanuvchi uchun chipta yaratish
+    Returns: (Ticket object, BytesIO rasm) yoki (None, error_message)
+    """
+    async with AsyncSessionLocal() as session:
+        # Foydalanuvchini topish
+        user_result = await session.execute(select(User).where(User.telegram_id == user_tg_id))
+        user = user_result.scalars().first()
+        if not user:
+            return None, "Foydalanuvchi topilmadi"
+        
+        # Eventni topish
+        event = await session.get(Event, event_id)
+        if not event:
+            return None, "Tadbir topilmadi"
+        
+        # Allaqachon chipta bormi tekshirish
+        existing = await session.execute(
+            select(Ticket).where(Ticket.user_id == user.id, Ticket.event_id == event_id)
+        )
+        if existing.scalars().first():
+            return None, "Allaqachon chipta mavjud"
+        
+        # PIN va xavfsizlik hash generatsiya
+        pin = generate_pin()
+        timestamp = datetime.utcnow().isoformat()
+        security_hash = generate_security_hash(user.id, event_id, pin, timestamp)
+        qr_data = generate_qr_data(event_id, user.telegram_id, security_hash)
+        
+        # Ticket yaratish
+        ticket = Ticket(
+            user_id=user.id,
+            event_id=event_id,
+            ticket_pin=pin,
+            security_hash=security_hash,
+            qr_data=qr_data
+        )
+        session.add(ticket)
+        await session.commit()
+        await session.refresh(ticket)
+        
+        # Chipta rasmini generatsiya qilish
+        club_name = user.club.club_name if user.club else "UFQ Community"
+        event_date = event.event_date.strftime("%d-%b, %H:%M") if event.event_date else "Tez orada"
+        
+        ticket_image = await generate_ticket_image(
+            user_full_name=user.full_name,
+            user_points=user.total_points,
+            event_title=event.title,
+            event_date=event_date,
+            club_name=club_name,
+            pin=pin,
+            qr_data=qr_data
+        )
+        
+        return ticket, ticket_image
+
+async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: int):
+    """
+    QR kod skanerlash va check-in amalga oshirish
+    Returns: (success: bool, message: str, user_name: str or None)
+    """
+    async with AsyncSessionLocal() as session:
+        # Scanner vakolatini tekshirish
+        scanner_result = await session.execute(select(User).where(User.telegram_id == scanner_tg_id))
+        scanner = scanner_result.scalars().first()
+        
+        if not scanner or scanner.role not in [RoleEnum.VP, RoleEnum.PRESIDENT, RoleEnum.SUPER_ADMIN]:
+            return False, "❌ Sizda skanerlash huquqi yo'q!", None
+        
+        # Chiptani topish
+        ticket_result = await session.execute(
+            select(Ticket).where(
+                Ticket.security_hash == security_hash,
+                Ticket.event_id == event_id
+            )
+        )
+        ticket = ticket_result.scalars().first()
+        
+        if not ticket:
+            return False, "❌ Noto'g'ri yoki yaroqsiz chipta!", None
+        
+        # Allaqachon ishlatilganmi?
+        if ticket.is_used:
+            used_time = ticket.used_at.strftime("%H:%M") if ticket.used_at else "noma'lum vaqt"
+            return False, f"⚠️ Bu chipta allaqachon ishlatilgan!\nSkanerlangan vaqt: {used_time}", None
+        
+        # Eventni va foydalanuvchini olish
+        event = await session.get(Event, event_id)
+        user = await session.get(User, ticket.user_id)
+        
+        if not event or not user:
+            return False, "❌ Xatolik: Ma'lumot topilmadi", None
+        
+        # Scanner ushbu klubning admin bo'lishi kerak
+        if scanner.role != RoleEnum.SUPER_ADMIN:
+            if not event.club_id or scanner.club_id != event.club_id:
+                return False, "❌ Siz bu tadbirni boshqara olmaysiz!", None
+        
+        # Registration ni yangilash
+        reg_result = await session.execute(
+            select(Registration).where(
+                Registration.user_id == user.id,
+                Registration.event_id == event_id
+            )
+        )
+        registration = reg_result.scalars().first()
+        
+        if not registration:
+            return False, "❌ Foydalanuvchi bu tadbirga ro'yxatdan o'tmagan!", None
+        
+        # Check-in amalga oshirish
+        ticket.is_used = True
+        ticket.used_at = datetime.utcnow()
+        registration.status = RegStatus.ATTENDED
+        registration.check_in_time = datetime.utcnow()
+        
+        # Ball qo'shish
+        old_points = user.total_points
+        user.total_points += event.attendance_points
+        
+        # Statusni yangilash
+        new_status = calculate_user_status(user.total_points)
+        old_status = user.user_status
+        user.user_status = new_status
+        
+        await session.commit()
+        
+        # Status o'zgargan bo'lsa, maxsus xabar
+        status_change_msg = ""
+        if old_status != new_status:
+            from bot.utils.status_manager import get_status_name_uz
+            status_change_msg = f"\n🎊 Tabriklaymiz! Sizning statusingiz o'zgarti: {get_status_name_uz(old_status)} → {get_status_name_uz(new_status)}"
+        
+        success_msg = f"✅ Muvaffaqiyatli!\n\n👤 {user.full_name}\n📅 {event.title}\n🎁 +{event.attendance_points} ball qo'shildi (Jami: {user.total_points}){status_change_msg}"
+        
+        return True, success_msg, user.full_name
+
+async def update_user_status_if_needed(user_id: int):
+    """Foydalanuvchi statusini yangilash (ball o'zgarsa)"""
+    async with AsyncSessionLocal() as session:
+        user = await session.get(User, user_id)
+        if not user:
+            return
+        
+        new_status = calculate_user_status(user.total_points)
+        if user.user_status != new_status:
+            user.user_status = new_status
+            await session.commit()

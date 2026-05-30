@@ -25,3 +25,5 @@ if not CHANNELS:
     logger.warning("⚠️ OGOHLANTIRISH: CHANNELS bo'sh! Kanal autentifikatsiyasi o'chirilgan.")
 
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite+aiosqlite:///ufq_events.db")
+
+BOT_USERNAME = os.getenv("BOT_USERNAME", "ufq_events_bot")  # Bot username (@ belgisisiz)

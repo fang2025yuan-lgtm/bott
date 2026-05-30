@@ -7,6 +7,7 @@ from bot.handlers.start import start_router
 from bot.handlers.user import user_router
 from bot.handlers.events import events_router
 from bot.handlers.admin import admin_router
+from bot.handlers.scanner import scanner_router
 from bot.middlewares.check_sub import CheckSubMiddleware
 
 logging.basicConfig(
@@ -15,7 +16,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Global bot instance (scanner uchun kerak)
+bot = None
+
 async def main():
+    global bot
     logger.info("Bot ishga tushmoqda...")
     
     # Database ni ishga tushirish
@@ -31,7 +36,8 @@ async def main():
     dp.callback_query.middleware(CheckSubMiddleware())
     logger.info("Middleware ulandi.")
     
-    # Router larni ulash
+    # Router larni ulash (scanner birinchi bo'lishi kerak - deep link uchun)
+    dp.include_router(scanner_router)
     dp.include_router(start_router)
     dp.include_router(user_router)
     dp.include_router(events_router)
