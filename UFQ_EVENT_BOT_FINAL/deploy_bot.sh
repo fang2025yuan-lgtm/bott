@@ -15,8 +15,9 @@ if [ -d "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
     # Ma'lumotlar bazasini zaxiralash
     if [ -f "/home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db" ]; then
         echo ">>> Ma'lumotlar bazasi zaxiralanmoqda..."
-        cp /home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db /tmp/ufq_events_backup.db
-        echo "Zaxira yaratildi: /tmp/ufq_events_backup.db"
+        mkdir -p /home/ubuntu/ufq_db_backup
+        cp /home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db /home/ubuntu/ufq_db_backup/ufq_events_backup.db
+        echo "Zaxira yaratildi: /home/ubuntu/ufq_db_backup/ufq_events_backup.db"
     fi
     sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
     echo "Eski versiya tozalandi."
@@ -52,9 +53,9 @@ python3 -m venv "$SCRIPT_DIR/venv"
 "$SCRIPT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
 
 # Ma'lumotlar bazasini tiklash
-if [ -f "/tmp/ufq_events_backup.db" ]; then
+if [ -f "/home/ubuntu/ufq_db_backup/ufq_events_backup.db" ]; then
     echo ">>> Ma'lumotlar bazasi tiklanmoqda..."
-    cp /tmp/ufq_events_backup.db "$SCRIPT_DIR/ufq_events.db"
+    cp /home/ubuntu/ufq_db_backup/ufq_events_backup.db "$SCRIPT_DIR/ufq_events.db"
     echo "Ma'lumotlar bazasi tiklandi."
 fi
 

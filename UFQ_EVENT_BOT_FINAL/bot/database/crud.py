@@ -55,7 +55,7 @@ async def update_user_role(telegram_id: int, role: RoleEnum):
 # --- CLUB FUNCTIONS ---
 async def get_all_clubs():
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Club))
+        result = await session.execute(select(Club).options(selectinload(Club.users)))
         return result.scalars().all()
 
 async def create_club(name: str, president_tg_id: int = None):
@@ -106,14 +106,19 @@ async def get_events_by_club(club_id: int):
         )
         return result.scalars().all()
 
+ALLOWED_EVENT_FIELDS = {
+    'title', 'description', 'post_link', 'registration_points',
+    'attendance_points', 'status', 'event_date', 'location', 'check_in_enabled'
+}
+
 async def update_event_field(event_id: int, field_name: str, value):
     """Tadbir maydonini alohida yangilash"""
+    if field_name not in ALLOWED_EVENT_FIELDS:
+        return False, "Noto'g'ri maydon nomi"
     async with AsyncSessionLocal() as session:
         event = await session.get(Event, event_id)
         if not event:
             return False, "Tadbir topilmadi"
-        if not hasattr(event, field_name):
-            return False, "Noto'g'ri maydon nomi"
         setattr(event, field_name, value)
         await session.commit()
         return True, "Tadbir yangilandi"
@@ -302,16 +307,25 @@ async def create_ticket(user_tg_id: int, event_id: int):
         if existing.scalars().first():
             return None, "Allaqachon chipta mavjud"
         
+        # Save user data before retry loop to avoid expired object issues after rollback
+        saved_user_id = user.id
+        saved_user_full_name = user.full_name
+        saved_user_total_points = user.total_points
+        saved_user_telegram_id = user.telegram_id
+        saved_club_name = user.club.club_name if user.club else "UFQ Community"
+        saved_event_title = event.title
+        saved_event_date = event.event_date
+        
         # PIN va xavfsizlik hash generatsiya (retry loop for PIN collision)
         max_attempts = 5
         for attempt in range(max_attempts):
             pin = generate_pin()
-            security_hash = generate_security_hash(user.id, event_id, pin)
-            qr_data = generate_qr_data(event_id, user.telegram_id, security_hash)
+            security_hash = generate_security_hash(saved_user_id, event_id, pin)
+            qr_data = generate_qr_data(event_id, saved_user_telegram_id, security_hash)
             
             # Ticket yaratish
             ticket = Ticket(
-                user_id=user.id,
+                user_id=saved_user_id,
                 event_id=event_id,
                 ticket_pin=pin,
                 security_hash=security_hash,
@@ -330,16 +344,15 @@ async def create_ticket(user_tg_id: int, event_id: int):
         await session.commit()
         await session.refresh(ticket)
         
-        # Chipta rasmini generatsiya qilish
-        club_name = user.club.club_name if user.club else "UFQ Community"
-        event_date = event.event_date.strftime("%d-%b, %H:%M") if event.event_date else "Tez orada"
+        # Chipta rasmini generatsiya qilish (using saved data to avoid detached instance issues)
+        event_date_str = saved_event_date.strftime("%d-%b, %H:%M") if saved_event_date else "Tez orada"
         
         ticket_image = await generate_ticket_image(
-            user_full_name=user.full_name,
-            user_points=user.total_points,
-            event_title=event.title,
-            event_date=event_date,
-            club_name=club_name,
+            user_full_name=saved_user_full_name,
+            user_points=saved_user_total_points,
+            event_title=saved_event_title,
+            event_date=event_date_str,
+            club_name=saved_club_name,
             pin=pin,
             qr_data=qr_data
         )

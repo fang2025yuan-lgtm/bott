@@ -22,7 +22,7 @@ async def handle_deep_link(message: Message, command: CommandObject, bot: Bot):
     if args.startswith("chk_"):
         try:
             # Parametrlarni ajratish
-            parts = args.split("_")
+            parts = args.split("_", 3)
             if len(parts) < 4:
                 return await message.answer("❌ Noto'g'ri QR kod formati!")
             
