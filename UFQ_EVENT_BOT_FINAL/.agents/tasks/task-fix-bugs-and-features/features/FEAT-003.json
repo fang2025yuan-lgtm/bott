@@ -1,0 +1,31 @@
+{
+  "id": "FEAT-003",
+  "type": "feat",
+  "description": "Add Super Admin Full Control panel - super admin can view/modify users, clubs, events, registrations. Add handlers for managing all data.",
+  "status": "completed",
+  "steps": [
+    "STEP 1 - Expand super admin panel in bot/handlers/admin.py: Update super_admin_panel() to show more commands. Add new commands: /users (list users with pagination), /clubs (list all clubs), /events_all (list all events), /edit_user (edit user data), /edit_event (edit event), /delete_event (delete/cancel event), /user_info <tg_id> (show user details).",
+    "STEP 2 - Add CRUD functions in bot/database/crud.py: (a) get_all_users(limit, offset) - paginated user list. (b) get_all_events(limit, offset) - all events regardless of status. (c) update_event(event_id, **kwargs) - update event fields. (d) cancel_event(event_id) - set event status to CANCELLED. (e) update_user_club(telegram_id, club_id) - change user's club. (f) update_user_points(telegram_id, points) - set user points and recalculate status. (g) get_club_by_id(club_id) - get single club. (h) delete_club(club_id) - delete a club.",
+    "STEP 3 - Add super admin handler implementations in bot/handlers/admin.py: (a) /users command - shows paginated list of users (first 20) with inline buttons for next page. (b) /user_info <tg_id> - shows full user details (name, club, role, points, status, registrations count). (c) /edit_user FSM - asks for telegram_id, then shows options (change role, change club, change points). (d) /edit_event FSM - asks for event_id, then allows changing title, description, status, points. (e) /delete_event <id> - cancels an event. (f) /clubs - lists all clubs with member counts.",
+    "STEP 4 - Add keyboards for super admin: In bot/keyboards/menus.py add: (a) super_admin_menu_keyboard() - inline keyboard with all management options. (b) user_management_keyboard(user_id) - inline buttons for edit/promote. (c) event_management_keyboard(event_id) - inline buttons for edit/cancel/delete.",
+    "STEP 5 - Update main menu: In bot/keyboards/menus.py main_menu_keyboard(): For SUPER_ADMIN role, also add a button for '📊 Statistika' that shows counts of users, events, clubs."
+  ],
+  "acceptance_criteria": [
+    "Super admin can list all users with /users command",
+    "Super admin can view user details with /user_info",
+    "Super admin can edit events (title, status, points)",
+    "Super admin can cancel/delete events",
+    "Super admin can change user's club assignment",
+    "Super admin can change user's points",
+    "Super admin can list all clubs",
+    "All new handlers are restricted to SUPER_ADMIN role only"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/bott/UFQ_EVENT_BOT_FINAL && python -m py_compile bot/handlers/admin.py && echo OK",
+    "Run: python -m py_compile bot/database/crud.py && echo OK",
+    "Run: python -m py_compile bot/keyboards/menus.py && echo OK",
+    "Run: python -c \"from bot.handlers.admin import admin_router; from bot.database.crud import get_all_users, get_all_events, update_event, cancel_event; print('All imports OK')\""
+  ],
+  "blocked_reason": null,
+  "findings": "All CRUD functions, admin handlers, and keyboards implemented successfully. All py_compile and import checks pass. The clubs handler uses get_all_clubs which relies on the relationship loading (club.users) - this works because the data is loaded within the session context. The promote_user function does not support promoting to SUPER_ADMIN by design."
+}

@@ -488,8 +488,9 @@ async def update_event(event_id: int, **kwargs):
         if not event:
             return False, "Tadbir topilmadi"
         for key, value in kwargs.items():
-            if hasattr(event, key):
-                setattr(event, key, value)
+            if key not in ALLOWED_EVENT_FIELDS:
+                continue
+            setattr(event, key, value)
         await session.commit()
         return True, "Tadbir yangilandi"
 
