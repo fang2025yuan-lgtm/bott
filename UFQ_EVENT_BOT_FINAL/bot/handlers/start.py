@@ -1,6 +1,6 @@
 from aiogram import Router, F
 from aiogram.types import Message, CallbackQuery
-from aiogram.filters import CommandStart
+from aiogram.filters import CommandStart, Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import html
@@ -16,7 +16,10 @@ class RegState(StatesGroup):
     waiting_for_name = State()
 
 @start_router.message(CommandStart())
-async def cmd_start(message: Message, state: FSMContext, command=None):
+async def cmd_start(message: Message, state: FSMContext):
+    # Agar FSM holatida bo'lsa, tozalash
+    await state.clear()
+    
     user = await get_user_by_tg_id(message.from_user.id)
     
     if message.from_user.id == SUPER_ADMIN_ID:
@@ -37,7 +40,15 @@ async def cmd_start(message: Message, state: FSMContext, command=None):
 
 @start_router.message(RegState.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
-    if not message.text: return await message.answer("Iltimos, matn yuboring.")
+    if not message.text: 
+        return await message.answer("Iltimos, matn yuboring.")
+    
+    # Ismni validatsiya qilish
+    if len(message.text) < 2:
+        return await message.answer("Ism juda qisqa. Kamida 2 ta harf kiriting.")
+    if len(message.text) > 100:
+        return await message.answer("Ism juda uzun. Maksimum 100 ta belgi.")
+    
     await state.update_data(full_name=message.text)
     
     clubs = await get_all_clubs()
@@ -62,7 +73,7 @@ async def process_club_selection(call: CallbackQuery, state: FSMContext):
         return await call.answer("Klub ID noto'g'ri", show_alert=True)
     
     data = await state.get_data()
-    full_name = data.get("full_name", call.from_user.full_name)
+    full_name = data.get("full_name", call.from_user.full_name or "Foydalanuvchi")
     
     role = RoleEnum.SUPER_ADMIN if call.from_user.id == SUPER_ADMIN_ID else RoleEnum.USER
     user = await create_user(telegram_id=call.from_user.id, full_name=full_name, username=call.from_user.username, club_id=club_id, role=role)

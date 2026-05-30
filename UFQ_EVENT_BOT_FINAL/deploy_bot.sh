@@ -5,7 +5,20 @@ echo "================================================="
 echo "   UFQ EVENT BOT (FINAL) - DEPLOY SCRIPT         "
 echo "================================================="
 
-cd /home/ubuntu/UFQ_EVENT_BOT_FINAL
+# Eski botni to'xtatish va o'chirish
+echo ">>> Eski bot versiyasini tekshirish..."
+if [ -d "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
+    echo "Eski versiya topildi. To'xtatish va o'chirish..."
+    sudo systemctl stop ufq-event-bot 2>/dev/null || true
+    sudo systemctl disable ufq-event-bot 2>/dev/null || true
+    sudo rm -f /etc/systemd/system/ufq-event-bot.service
+    sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
+    echo "Eski versiya tozalandi."
+fi
+
+# Joriy papkani aniqlash
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+cd "$SCRIPT_DIR"
 
 echo ""
 echo "Botni ishga tushirish uchun ma'lumotlarni kiriting:"
@@ -13,7 +26,8 @@ read -p "1. Telegram Bot Tokenini kiriting: " bot_token
 read -p "2. SUPER_ADMIN Telegram ID raqamini kiriting: " admin_id
 read -p "3. Majburiy kanallarni kiriting (Vergul bilan ajrating, misol: -1001234,@kanal): " channels
 
-cat << 'EOF' > /home/ubuntu/UFQ_EVENT_BOT_FINAL/.env
+# .env faylini yaratish (heredoc ichida o'zgaruvchilar kengayishi uchun qo'shtirnoqsiz)
+cat << EOF > "$SCRIPT_DIR/.env"
 BOT_TOKEN=$bot_token
 SUPER_ADMIN_ID=$admin_id
 CHANNELS=$channels
@@ -27,12 +41,12 @@ echo ">>> Python muhiti tayyorlanmoqda..."
 sudo apt-get update -y
 sudo apt-get install -y python3-venv python3-pip
 
-rm -rf venv
-python3 -m venv venv
-/home/ubuntu/UFQ_EVENT_BOT_FINAL/venv/bin/pip install -r requirements.txt
+rm -rf "$SCRIPT_DIR/venv"
+python3 -m venv "$SCRIPT_DIR/venv"
+"$SCRIPT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
 
 echo ">>> Fayl huquqlari to'g'rilanmoqda..."
-sudo chown -R ubuntu:ubuntu /home/ubuntu/UFQ_EVENT_BOT_FINAL
+sudo chown -R $(whoami):$(whoami) "$SCRIPT_DIR"
 
 echo ">>> Systemd sozlanmoqda..."
 cat << EOF | sudo tee /etc/systemd/system/ufq-event-bot.service
@@ -41,9 +55,9 @@ Description=UFQ Event Bot (FINAL)
 After=network.target
 
 [Service]
-User=ubuntu
-WorkingDirectory=/home/ubuntu/UFQ_EVENT_BOT_FINAL
-ExecStart=/home/ubuntu/UFQ_EVENT_BOT_FINAL/venv/bin/python -m bot.main
+User=$(whoami)
+WorkingDirectory=$SCRIPT_DIR
+ExecStart=$SCRIPT_DIR/venv/bin/python -m bot.main
 Restart=always
 RestartSec=3
 

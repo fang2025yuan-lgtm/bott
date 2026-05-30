@@ -19,6 +19,10 @@ class CheckSubMiddleware(BaseMiddleware):
         
         if user_id == SUPER_ADMIN_ID:
             return await handler(event, data)
+        
+        # Agar CHANNELS bo'sh bo'lsa, tekshiruv o'tkazilmaydi
+        if not CHANNELS:
+            return await handler(event, data)
             
         not_subscribed_channels = []
         
@@ -28,9 +32,14 @@ class CheckSubMiddleware(BaseMiddleware):
                 if member.status in ['left', 'kicked', 'banned']:
                     not_subscribed_channels.append(channel)
             except Exception as e:
+                # Faqat tarmoq xatolari yoki noto'g'ri kanal IDda xatolik
+                # Kanal ID noto'g'ri yoki bot admin emas bo'lsa - logga yoz
                 logger.error(f"Kanalni tekshirishda xatolik ({channel}): {e}")
-                # Xato bo'lsa, kanalga a'zo bo'lmagan deb hisoblash
-                not_subscribed_channels.append(channel)
+                # Tarmoq xatosi yoki bot ruxsati yo'qligini a'zolik muammosi bilan aralashtrmaslik
+                # Faqat `ChatNotFound` yoki `BotKicked` da qo'shish
+                if "chat not found" in str(e).lower() or "bot was kicked" in str(e).lower():
+                    not_subscribed_channels.append(channel)
+                # Boshqa xatolar (tarmoq, timeout) ni e'tiborsiz qoldirish
                 
         if not_subscribed_channels:
             keyboard = []
@@ -38,22 +47,40 @@ class CheckSubMiddleware(BaseMiddleware):
                 ch_str = str(ch)
                 if ch_str.startswith("@"):
                     url = f"https://t.me/{ch_str.replace('@', '')}"
+                    keyboard.append([InlineKeyboardButton(text=f"📢 {ch_str} kanaliga a'zo bo'lish", url=url)])
                 else:
-                    url = f"https://t.me/c/{ch_str.replace('-100', '')}/1"
-                keyboard.append([InlineKeyboardButton(text=f"📢 Kanalga a'zo bo'lish", url=url)])
+                    # Private kanal uchun havolaga kanalning raqamini ko'rsatish
+                    keyboard.append([InlineKeyboardButton(text=f"📢 Kanal ID: {ch_str} (admindan havola so'rang)", callback_data="cant_join")])
             
-            keyboard.append([InlineKeyboardButton(text="✅ A'zo bo'ldim", callback_data="check_sub")])
+            keyboard.append([InlineKeyboardButton(text="✅ A'zo bo'ldim, qayta tekshirish", callback_data="check_sub")])
             markup = InlineKeyboardMarkup(inline_keyboard=keyboard)
             
             msg_text = "⛔ Tizimdan foydalanish uchun quyidagi majburiy kanallarga a'zo bo'lishingiz shart!"
             
             if isinstance(event, Message):
                 await event.answer(msg_text, reply_markup=markup)
-            elif isinstance(event, CallbackQuery) and event.data != "check_sub":
+            elif isinstance(event, CallbackQuery) and event.data == "check_sub":
+                # Foydalanuvchi "A'zo bo'ldim" tugmasini bosgan - qayta tekshirish
+                await event.answer("🔄 Qayta tekshirilmoqda...", show_alert=False)
+                # Middleware qayta ishlaydi, agar hali a'zo bo'lmasa xabar ko'rsatiladi
+                return
+            elif isinstance(event, CallbackQuery) and event.data == "cant_join":
+                await event.answer("Iltimos, admin bilan bog'laning va kanalga kirish havolasini so'rang.", show_alert=True)
+                return
+            elif isinstance(event, CallbackQuery):
                 await event.message.answer(msg_text, reply_markup=markup)
                 await event.answer()
-            elif isinstance(event, CallbackQuery) and event.data == "check_sub":
-                await event.answer("Hali hamma kanallarga a'zo bo'lmadingiz!", show_alert=True)
             return 
+        
+        # Agar foydalanuvchi "check_sub" bosganda va hamma kanalga a'zo bo'lsa - /start ga yo'naltirish
+        if isinstance(event, CallbackQuery) and event.data == "check_sub":
+            await event.message.delete()
+            await event.answer("✅ Tasdiqlandi! Endi botdan foydalana olasiz.", show_alert=True)
+            # /start handler chaqirish
+            from bot.handlers.start import cmd_start
+            from aiogram.fsm.context import FSMContext
+            state: FSMContext = data['state']
+            await cmd_start(event.message, state)
+            return
         
         return await handler(event, data)

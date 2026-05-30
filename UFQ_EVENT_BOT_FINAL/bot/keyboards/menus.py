@@ -28,10 +28,23 @@ def admin_events_keyboard(events):
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
 def attendance_keyboard(reg_id, current_status):
-    att_text = "✅ Qatnashdi" if current_status == RegStatus.ATTENDED else "✔️ Keldi qilib belgilash"
-    abs_text = "❌ Qatnashmadi" if current_status == RegStatus.ABSENT else "✖️ Kelmadi"
-    kb = [
-        [InlineKeyboardButton(text=att_text, callback_data=f"att_{reg_id}_yes")],
-        [InlineKeyboardButton(text=abs_text, callback_data=f"att_{reg_id}_no")]
-    ]
+    # Holat indikatorlari va amal tugmalari alohida
+    if current_status == RegStatus.ATTENDED:
+        # Foydalanuvchi qatnashgan - faqat "Qatnashmadi" deb o'zgartirish mumkin
+        kb = [
+            [InlineKeyboardButton(text="✅ Qatnashdi (joriy holat)", callback_data=f"att_status_{reg_id}")],
+            [InlineKeyboardButton(text="❌ Qatnashmadi deb belgilash", callback_data=f"att_{reg_id}_no")]
+        ]
+    elif current_status == RegStatus.ABSENT:
+        # Foydalanuvchi qatnashmagan - faqat "Qatnashdi" deb o'zgartirish mumkin
+        kb = [
+            [InlineKeyboardButton(text="✅ Qatnashdi deb belgilash", callback_data=f"att_{reg_id}_yes")],
+            [InlineKeyboardButton(text="❌ Qatnashmadi (joriy holat)", callback_data=f"att_status_{reg_id}")]
+        ]
+    else:
+        # REGISTERED - hali davomat belgilanmagan
+        kb = [
+            [InlineKeyboardButton(text="✅ Qatnashdi", callback_data=f"att_{reg_id}_yes")],
+            [InlineKeyboardButton(text="❌ Qatnashmadi", callback_data=f"att_{reg_id}_no")]
+        ]
     return InlineKeyboardMarkup(inline_keyboard=kb)

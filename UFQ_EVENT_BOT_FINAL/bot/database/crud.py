@@ -15,9 +15,10 @@ async def create_user(telegram_id: int, full_name: str, username: str = None, cl
         result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         existing = result.scalars().first()
         if existing:
-            existing.full_name = full_name
-            existing.username = username
-            if club_id: existing.club_id = club_id
+            # Foydalanuvchi mavjud bo'lsa, faqat username ni yangilash
+            # full_name va club_id ni o'zgartirmaslik (birinchi ro'yxatdan o'tish ma'lumotlarini saqlash)
+            if username:
+                existing.username = username
             await session.commit()
             await session.refresh(existing)
             return existing
@@ -63,9 +64,11 @@ async def create_club(name: str):
             return None, "Bunday nomli klub allaqachon mavjud."
 
 # --- EVENT FUNCTIONS ---
-async def get_active_events():
+async def get_active_events(limit: int = 50):
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Event).where(Event.status == EventStatus.ACTIVE).order_by(Event.id.desc()))
+        result = await session.execute(
+            select(Event).where(Event.status == EventStatus.ACTIVE).order_by(Event.id.desc()).limit(limit)
+        )
         return result.scalars().all()
 
 async def get_event_by_id(event_id: int):
@@ -79,7 +82,7 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
         user = user_res.scalars().first()
         
         if not user: 
-            return False
+            return False, "Foydalanuvchi topilmadi"
         
         new_event = Event(
             title=title,
@@ -92,7 +95,7 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
         )
         session.add(new_event)
         await session.commit()
-        return True
+        return True, "Muvaffaqiyatli yaratildi"
 
 # --- REGISTRATION & LEADERBOARD FUNCTIONS ---
 async def register_user_for_event(user_tg_id: int, event_id: int):
@@ -118,15 +121,18 @@ async def register_user_for_event(user_tg_id: int, event_id: int):
 async def get_top_users(limit: int = 10):
     async with AsyncSessionLocal() as session:
         result = await session.execute(
-            select(User).where(User.role != RoleEnum.SUPER_ADMIN).order_by(desc(User.total_points)).limit(limit)
+            select(User).where(
+                User.role.in_([RoleEnum.USER])  # Faqat oddiy foydalanuvchilar
+            ).order_by(desc(User.total_points)).limit(limit)
         )
         return result.scalars().all()
 
-async def get_user_results(user_id: int):
+async def get_user_results(telegram_id: int):
     async with AsyncSessionLocal() as session:
-        user_result = await session.execute(select(User).where(User.telegram_id == user_id))
+        user_result = await session.execute(select(User).where(User.telegram_id == telegram_id))
         user = user_result.scalars().first()
-        if not user: return 0, 0
+        if not user: 
+            return 0, 0
         
         regs_result = await session.execute(
             select(Registration).where(Registration.user_id == user.id, Registration.status == RegStatus.ATTENDED)
@@ -170,11 +176,28 @@ async def promote_user(target_tg_id: int, role_name: str):
         result = await session.execute(select(User).where(User.telegram_id == target_tg_id))
         user = result.scalars().first()
         
-        if not user: return False, "Foydalanuvchi topilmadi."
+        if not user: 
+            return False, "Foydalanuvchi topilmadi."
+        
+        # SUPER_ADMIN ga ko'tarish taqiqlangan
+        if role_name.upper() == 'SUPER_ADMIN':
+            return False, "SUPER_ADMIN rolini faqat tizim berishi mumkin."
         
         try:
-            user.role = RoleEnum[role_name.upper()]
+            new_role = RoleEnum[role_name.upper()]
+            user.role = new_role
+            
+            # Agar PRESIDENT yoki VP berilsa, club jadvalini yangilash
+            if user.club_id and new_role in [RoleEnum.PRESIDENT, RoleEnum.VP]:
+                club_result = await session.execute(select(Club).where(Club.id == user.club_id))
+                club = club_result.scalars().first()
+                if club:
+                    if new_role == RoleEnum.PRESIDENT:
+                        club.president_id = user.id
+                    elif new_role == RoleEnum.VP:
+                        club.vp_id = user.id
+            
             await session.commit()
             return True, f"{user.full_name} endi {role_name}!"
-        except Exception:
+        except KeyError:
             return False, "Noto'g'ri lavozim nomi."
