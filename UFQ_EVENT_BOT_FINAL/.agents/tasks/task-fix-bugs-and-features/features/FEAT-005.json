@@ -2,7 +2,7 @@
   "id": "FEAT-005",
   "type": "fix",
   "description": "Address semantic review issues: update_event_field allowlist, deep-link maxsplit, create_ticket session safety, deploy backup path, get_all_clubs eager loading, and migration for new Event columns.",
-  "status": "in_progress",
+  "status": "completed",
   "steps": [
     "STEP 1 - Add allowlist to update_event_field in crud.py",
     "STEP 2 - Fix deep-link hash parsing with maxsplit in scanner.py",
@@ -29,5 +29,5 @@
     "Run: grep -q 'selectinload' bot/database/crud.py && echo PASS || echo FAIL"
   ],
   "blocked_reason": null,
-  "findings": null
+  "findings": "All 6 fixes implemented and verified via py_compile and import checks. The allowlist uses a set for O(1) lookup. The migration function checks PRAGMA table_info before running ALTER TABLE statements. The create_ticket function now saves all user/event data to local variables before the retry loop."
 }
