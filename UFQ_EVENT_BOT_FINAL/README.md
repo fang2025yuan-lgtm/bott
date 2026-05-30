@@ -71,16 +71,20 @@ UFQ_EVENT_BOT_FINAL/
 ### Usul 1: Manual (qo'lda ZIP yuklash)
 
 ```bash
-# 1. Yuklab olish
+# 1. Eski versiyani o'chirish (agar mavjud bo'lsa)
+rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
+
+# 2. Yuklab olish va ochish
+cd /home/ubuntu
 wget https://github.com/fang2025yuan-lgtm/bott/raw/main/UFQ_EventBot_PREMIUM_v2.0.zip
-unzip UFQ_EventBot_PREMIUM_v2.0.zip
+unzip -o UFQ_EventBot_PREMIUM_v2.0.zip
 cd UFQ_EVENT_BOT_FINAL
 
-# 2. Deploy
+# 3. Deploy
 chmod +x deploy_bot.sh
 sudo ./deploy_bot.sh
 
-# 3. Tekshirish
+# 4. Tekshirish
 sudo systemctl status ufq-event-bot
 sudo journalctl -u ufq-event-bot -f
 ```

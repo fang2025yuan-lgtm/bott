@@ -5,26 +5,39 @@ echo "================================================="
 echo "   UFQ EVENT BOT (FINAL) - DEPLOY SCRIPT         "
 echo "================================================="
 
-# Eski botni to'xtatish va o'chirish
-echo ">>> Eski bot versiyasini tekshirish..."
-if [ -d "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
-    echo "Eski versiya topildi. To'xtatish va o'chirish..."
-    sudo systemctl stop ufq-event-bot 2>/dev/null || true
-    sudo systemctl disable ufq-event-bot 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/ufq-event-bot.service
-    # Ma'lumotlar bazasini zaxiralash
-    if [ -f "/home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db" ]; then
-        echo ">>> Ma'lumotlar bazasi zaxiralanmoqda..."
-        mkdir -p /home/ubuntu/ufq_db_backup
-        cp /home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db /home/ubuntu/ufq_db_backup/ufq_events_backup.db
-        echo "Zaxira yaratildi: /home/ubuntu/ufq_db_backup/ufq_events_backup.db"
-    fi
-    sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
-    echo "Eski versiya tozalandi."
-fi
-
 # Joriy papkani aniqlash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Agar script /home/ubuntu/UFQ_EVENT_BOT_FINAL dan ishga tushirilmagan bo'lsa,
+# eski versiyani to'xtatish va o'chirish
+if [ "$SCRIPT_DIR" != "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
+    echo ">>> Eski bot versiyasini tekshirish..."
+    if [ -d "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
+        echo "Eski versiya topildi. To'xtatish va o'chirish..."
+        sudo systemctl stop ufq-event-bot 2>/dev/null || true
+        sudo systemctl disable ufq-event-bot 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/ufq-event-bot.service
+        # Ma'lumotlar bazasini zaxiralash
+        if [ -f "/home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db" ]; then
+            echo ">>> Ma'lumotlar bazasi zaxiralanmoqda..."
+            mkdir -p /home/ubuntu/ufq_db_backup
+            cp /home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db /home/ubuntu/ufq_db_backup/ufq_events_backup.db
+            echo "Zaxira yaratildi: /home/ubuntu/ufq_db_backup/ufq_events_backup.db"
+        fi
+        sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
+        echo "Eski versiya tozalandi."
+    fi
+    
+    # Yangi versiyani /home/ubuntu/UFQ_EVENT_BOT_FINAL ga ko'chirish
+    echo ">>> Yangi versiyani joylashtirish..."
+    sudo cp -r "$SCRIPT_DIR" /home/ubuntu/UFQ_EVENT_BOT_FINAL
+    SCRIPT_DIR="/home/ubuntu/UFQ_EVENT_BOT_FINAL"
+    cd "$SCRIPT_DIR"
+    echo "Yangi versiya joylashtirildi: $SCRIPT_DIR"
+else
+    echo ">>> Script to'g'ri joyda ishlamoqda: $SCRIPT_DIR"
+fi
+
 cd "$SCRIPT_DIR"
 
 echo ""
