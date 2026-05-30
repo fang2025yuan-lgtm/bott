@@ -4,6 +4,8 @@ from bot.config import DB_PATH
 
 async def init_db():
     async with aiosqlite.connect(DB_PATH) as db:
+        await db.execute("PRAGMA journal_mode=WAL")
+        await db.execute("PRAGMA busy_timeout=5000")
         await db.execute('''CREATE TABLE IF NOT EXISTS clubs (id INTEGER PRIMARY KEY AUTOINCREMENT, name TEXT NOT NULL UNIQUE, created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP)''')
         await db.execute('''CREATE TABLE IF NOT EXISTS roles (id INTEGER PRIMARY KEY AUTOINCREMENT, club_id INTEGER, name TEXT NOT NULL, is_president BOOLEAN DEFAULT 0, UNIQUE(club_id, name), FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE)''')
         await db.execute('''CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, telegram_id INTEGER UNIQUE, full_name TEXT, club_id INTEGER, role_id INTEGER, is_bp BOOLEAN DEFAULT 0, is_cp BOOLEAN DEFAULT 0, score INTEGER DEFAULT 0, joined_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, FOREIGN KEY (club_id) REFERENCES clubs(id) ON DELETE CASCADE, FOREIGN KEY (role_id) REFERENCES roles(id) ON DELETE CASCADE)''')

@@ -136,7 +136,7 @@ Ikkala bot **bitta SQLite ma'lumotlar bazasidan** foydalanadi. Bu yondashuv foyd
 | is_cp | INTEGER DEFAULT 0 | Club President (1=ha, 0=yo'q) |
 | joined_at | TEXT | Qo'shilgan sana |
 | total_points | INTEGER DEFAULT 0 | Umumiy ballar (Event Bot yozadi) |
-| user_status | TEXT DEFAULT 'BRONZE' | Status: BRONZE/SILVER/GOLD/PLATINUM/DIAMOND |
+| user_status | TEXT DEFAULT 'BRONZE' | Status: BRONZE/SILVER/GOLD/PLATINUM |
 | username | TEXT | Telegram username |
 
 ### `invites` jadvali (Team Bot)
@@ -242,17 +242,16 @@ Ikkala bot **bitta SQLite ma'lumotlar bazasidan** foydalanadi. Bu yondashuv foyd
 - **is_cp=1** bo'lgan foydalanuvchi avtomatik ravishda Event Botda tadbir yarata oladi
 - **Har qanday foydalanuvchi** (hatto boshqa klubdan) **har qanday tadbirga** yozilishi mumkin
 - **Ballar** Event Bot tomonidan yoziladi, lekin ikkala botda ko'rinadi
-- **Status** (BRONZE/SILVER/GOLD/PLATINUM/DIAMOND) ballar asosida hisoblanadi
+- **Status** (BRONZE/SILVER/GOLD/PLATINUM) ballar asosida hisoblanadi
 
 ### Ball -> Status Jadvali
 
-| Status | Minimal Ball |
-|--------|-------------|
-| BRONZE | 0 |
-| SILVER | 50 |
-| GOLD | 150 |
-| PLATINUM | 300 |
-| DIAMOND | 500 |
+| Status | Ball Oralig'i |
+|--------|--------------|
+| BRONZE | 0 - 15 ball |
+| SILVER (Kumush) | 16 - 50 ball |
+| GOLD (Oltin) | 51 - 120 ball |
+| PLATINUM | 121+ ball |
 
 ---
 

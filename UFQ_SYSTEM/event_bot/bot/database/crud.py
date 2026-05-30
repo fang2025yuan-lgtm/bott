@@ -197,22 +197,34 @@ async def get_user_results(telegram_id: int):
 
 
 async def get_event_registrations(event_id: int):
-    """Get registrations for an event. Returns list of (registration_dict, user_dict) tuples."""
+    """Get registrations for an event. Returns list of (registration, user_dict) tuples."""
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(Registration).where(Registration.event_id == event_id)
         )
         registrations = result.scalars().all()
 
+    if not registrations:
+        return []
+
+    # Batch fetch all users in one query
+    user_ids = [reg.user_id for reg in registrations]
+    placeholders = ','.join(['?' for _ in user_ids])
+
+    async with aiosqlite.connect(DB_PATH) as db:
+        db.row_factory = aiosqlite.Row
+        cursor = await db.execute(
+            f"SELECT * FROM users WHERE id IN ({placeholders})", user_ids
+        )
+        user_rows = await cursor.fetchall()
+
+    user_map = {row['id']: dict(row) for row in user_rows}
+
     results = []
     for reg in registrations:
-        # Get user data from shared table
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
-            cursor = await db.execute("SELECT * FROM users WHERE id=?", (reg.user_id,))
-            user_row = await cursor.fetchone()
-            if user_row:
-                results.append((reg, dict(user_row)))
+        user_data = user_map.get(reg.user_id)
+        if user_data:
+            results.append((reg, user_data))
 
     return results
 
