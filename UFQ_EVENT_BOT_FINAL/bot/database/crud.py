@@ -1,5 +1,6 @@
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from bot.database.models import User, Club, Event, Registration, Ticket, EventStatus, RegStatus, RoleEnum, UserStatus
 from bot.database.db import AsyncSessionLocal
 from bot.utils.ticket_generator import generate_pin, generate_security_hash, generate_qr_data, generate_ticket_image
@@ -118,6 +119,7 @@ async def register_user_for_event(user_tg_id: int, event_id: int):
             new_reg = Registration(user_id=user.id, event_id=event_id)
             session.add(new_reg)
             user.total_points += event.registration_points
+            user.user_status = calculate_user_status(user.total_points)
             await session.commit()
             return True, f"Muvaffaqiyatli! Sizga {event.registration_points} ball qo'shildi."
         except IntegrityError:
@@ -128,7 +130,7 @@ async def get_top_users(limit: int = 10):
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(User).where(
-                User.role.in_([RoleEnum.USER])  # Faqat oddiy foydalanuvchilar
+                User.role != RoleEnum.SUPER_ADMIN  # SUPER_ADMIN dan boshqa hamma
             ).order_by(desc(User.total_points)).limit(limit)
         )
         return result.scalars().all()
@@ -170,10 +172,33 @@ async def mark_attendance(reg_id: int, status: RegStatus):
 
         if status == RegStatus.ATTENDED and reg.status != RegStatus.ATTENDED:
             user.total_points += event.attendance_points
+            # Chiptani ishlatilgan deb belgilash
+            ticket_result = await session.execute(
+                select(Ticket).where(
+                    Ticket.user_id == user.id,
+                    Ticket.event_id == reg.event_id
+                )
+            )
+            ticket = ticket_result.scalars().first()
+            if ticket:
+                ticket.is_used = True
+                ticket.used_at = datetime.utcnow()
         elif status != RegStatus.ATTENDED and reg.status == RegStatus.ATTENDED:
             user.total_points = max(0, user.total_points - event.attendance_points)
+            # Chiptani qaytarish
+            ticket_result = await session.execute(
+                select(Ticket).where(
+                    Ticket.user_id == user.id,
+                    Ticket.event_id == reg.event_id
+                )
+            )
+            ticket = ticket_result.scalars().first()
+            if ticket:
+                ticket.is_used = False
+                ticket.used_at = None
             
         reg.status = status
+        user.user_status = calculate_user_status(user.total_points)
         await session.commit()
         return True
 
@@ -218,7 +243,9 @@ async def create_ticket(user_tg_id: int, event_id: int):
     """
     async with AsyncSessionLocal() as session:
         # Foydalanuvchini topish
-        user_result = await session.execute(select(User).where(User.telegram_id == user_tg_id))
+        user_result = await session.execute(
+            select(User).where(User.telegram_id == user_tg_id).options(selectinload(User.club))
+        )
         user = user_result.scalars().first()
         if not user:
             return None, "Foydalanuvchi topilmadi"
@@ -235,21 +262,31 @@ async def create_ticket(user_tg_id: int, event_id: int):
         if existing.scalars().first():
             return None, "Allaqachon chipta mavjud"
         
-        # PIN va xavfsizlik hash generatsiya
-        pin = generate_pin()
-        timestamp = datetime.utcnow().isoformat()
-        security_hash = generate_security_hash(user.id, event_id, pin, timestamp)
-        qr_data = generate_qr_data(event_id, user.telegram_id, security_hash)
+        # PIN va xavfsizlik hash generatsiya (retry loop for PIN collision)
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            pin = generate_pin()
+            security_hash = generate_security_hash(user.id, event_id, pin)
+            qr_data = generate_qr_data(event_id, user.telegram_id, security_hash)
+            
+            # Ticket yaratish
+            ticket = Ticket(
+                user_id=user.id,
+                event_id=event_id,
+                ticket_pin=pin,
+                security_hash=security_hash,
+                qr_data=qr_data
+            )
+            session.add(ticket)
+            try:
+                await session.flush()
+                break
+            except IntegrityError:
+                await session.rollback()
+                if attempt == max_attempts - 1:
+                    return None, "PIN generatsiya qilishda xatolik. Qaytadan urinib ko'ring."
+                continue
         
-        # Ticket yaratish
-        ticket = Ticket(
-            user_id=user.id,
-            event_id=event_id,
-            ticket_pin=pin,
-            security_hash=security_hash,
-            qr_data=qr_data
-        )
-        session.add(ticket)
         await session.commit()
         await session.refresh(ticket)
         
@@ -322,6 +359,10 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         
         if not registration:
             return False, "❌ Foydalanuvchi bu tadbirga ro'yxatdan o'tmagan!", None
+        
+        # Allaqachon tashrif buyurganmi tekshirish
+        if registration.status == RegStatus.ATTENDED:
+            return False, "⚠️ Bu foydalanuvchi allaqachon tashrif buyurgan!", None
         
         # Check-in amalga oshirish
         ticket.is_used = True

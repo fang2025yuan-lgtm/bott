@@ -93,10 +93,14 @@ async def my_tickets_command(message: Message):
     """
     from bot.database.db import AsyncSessionLocal
     from sqlalchemy.future import select
-    from bot.database.models import Ticket, Event
+    from sqlalchemy.orm import selectinload
+    from bot.database.models import Ticket, Event, User
     
     async with AsyncSessionLocal() as session:
-        user = await get_user_by_tg_id(message.from_user.id)
+        user_result = await session.execute(
+            select(User).where(User.telegram_id == message.from_user.id).options(selectinload(User.club))
+        )
+        user = user_result.scalars().first()
         if not user:
             return await message.answer("❌ Foydalanuvchi topilmadi!")
         

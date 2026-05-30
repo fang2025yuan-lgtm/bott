@@ -1,6 +1,6 @@
 import io
 import hashlib
-import random
+import secrets
 import string
 from datetime import datetime
 from PIL import Image, ImageDraw, ImageFont
@@ -9,12 +9,12 @@ from bot.config import BOT_USERNAME
 
 def generate_pin():
     """6 xonali unikal PIN generatsiya qilish"""
-    return ''.join(random.choices(string.digits, k=6))
+    return ''.join(secrets.choice(string.digits) for _ in range(6))
 
-def generate_security_hash(user_id: int, event_id: int, pin: str, timestamp: str):
+def generate_security_hash(user_id: int, event_id: int, pin: str):
     """Xavfsizlik hash yaratish"""
-    data = f"{user_id}:{event_id}:{pin}:{timestamp}"
-    return hashlib.sha256(data.encode()).hexdigest()[:16]
+    data = f"{user_id}:{event_id}:{pin}"
+    return hashlib.sha256(data.encode()).hexdigest()[:32]
 
 def generate_qr_data(event_id: int, user_telegram_id: int, security_hash: str):
     """QR kod uchun deep link yaratish"""

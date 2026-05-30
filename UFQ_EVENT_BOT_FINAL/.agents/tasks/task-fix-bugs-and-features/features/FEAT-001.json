@@ -1,0 +1,35 @@
+{
+  "id": "FEAT-001",
+  "type": "fix",
+  "description": "Fix all CRUD, database, and utility layer bugs (BUG-002 through BUG-008, BUG-012, BUG-013). These are the foundational data-layer fixes that other features depend on.",
+  "status": "in_progress",
+  "steps": [
+    "STEP 1 - BUG-006 & BUG-008: In bot/utils/ticket_generator.py: (a) Replace 'import random' and 'import string' with 'import secrets' and 'import string'. Change generate_pin() to use secrets.choice(string.digits) instead of random.choices. (b) In generate_security_hash(), change [:16] to [:32] to use longer hash. Remove the unused 'timestamp' parameter from the function signature.",
+    "STEP 2 - BUG-007: In bot/database/crud.py create_ticket() function: Wrap the PIN generation and ticket creation in a retry loop (up to 5 attempts). On IntegrityError (PIN collision), rollback and regenerate PIN. Import IntegrityError if not already imported.",
+    "STEP 3 - BUG-002: In bot/database/crud.py create_ticket() function: Add 'from sqlalchemy.orm import selectinload' at top. In the user query, add .options(selectinload(User.club)) so that user.club is eagerly loaded. Also fix the my_tickets_command in bot/handlers/scanner.py similarly - add selectinload(User.club) to the user query.",
+    "STEP 4 - BUG-003 & BUG-018: In bot/database/crud.py verify_and_checkin(): Before processing, also check if registration.status == RegStatus.ATTENDED (already attended) and return early with appropriate message. In mark_attendance(): When setting status to ATTENDED, also find and update the user's ticket for that event: set ticket.is_used = True, ticket.used_at = datetime.utcnow(). When reverting from ATTENDED, set ticket.is_used = False, ticket.used_at = None.",
+    "STEP 5 - BUG-004 & BUG-021: In bot/database/crud.py mark_attendance(): After modifying user.total_points, calculate new status with calculate_user_status(user.total_points) and set user.user_status = new_status. In register_user_for_event(): After adding registration_points to user.total_points, also calculate and set user.user_status.",
+    "STEP 6 - BUG-012: In bot/handlers/scanner.py my_tickets_command(): Remove the separate get_user_by_tg_id() call. Instead, query User directly within the existing session using select(User).where(User.telegram_id == message.from_user.id).options(selectinload(User.club)). Use that user object for the rest of the function.",
+    "STEP 7 - BUG-013: In bot/database/crud.py get_top_users(): Change the filter from User.role.in_([RoleEnum.USER]) to User.role != RoleEnum.SUPER_ADMIN so that VP, PRESIDENT users also appear on leaderboard."
+  ],
+  "acceptance_criteria": [
+    "generate_pin() uses secrets module, not random",
+    "generate_security_hash() returns 32-char hash and does not take timestamp parameter",
+    "create_ticket() has retry loop for PIN collision",
+    "create_ticket() uses selectinload(User.club) to avoid lazy loading",
+    "verify_and_checkin() checks registration.status == ATTENDED before processing",
+    "mark_attendance() sets ticket.is_used and ticket.used_at when marking ATTENDED",
+    "mark_attendance() and register_user_for_event() both update user.user_status after point changes",
+    "my_tickets_command() uses a single session with selectinload for user.club",
+    "get_top_users() includes VP and PRESIDENT users, excludes only SUPER_ADMIN"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/bott/UFQ_EVENT_BOT_FINAL && python -m py_compile bot/utils/ticket_generator.py && echo OK",
+    "Run: python -m py_compile bot/database/crud.py && echo OK",
+    "Run: python -m py_compile bot/handlers/scanner.py && echo OK",
+    "Run: python -c \"from bot.utils.ticket_generator import generate_pin, generate_security_hash; pin = generate_pin(); assert len(pin) == 6; h = generate_security_hash(1, 1, pin); assert len(h) == 32; print('PASS')\"",
+    "Run: python -c \"from bot.database.crud import get_top_users, mark_attendance, register_user_for_event, verify_and_checkin, create_ticket; print('All imports OK')\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
