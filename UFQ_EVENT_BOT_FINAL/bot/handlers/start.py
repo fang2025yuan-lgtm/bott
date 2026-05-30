@@ -72,6 +72,8 @@ async def process_club_selection(call: CallbackQuery, state: FSMContext):
     except (ValueError, IndexError):
         return await call.answer("Klub ID noto'g'ri", show_alert=True)
     
+    await call.answer()
+    
     data = await state.get_data()
     full_name = data.get("full_name", call.from_user.full_name or "Foydalanuvchi")
     
@@ -81,5 +83,4 @@ async def process_club_selection(call: CallbackQuery, state: FSMContext):
     await call.message.edit_text("🎉 Ajoyib! Profilingiz muvaffaqiyatli yaratildi va klubga biriktirildi.")
     await call.message.answer("Asosiy menyu:", reply_markup=main_menu_keyboard(user.role.value))
     await state.clear()
-    await call.answer()
 

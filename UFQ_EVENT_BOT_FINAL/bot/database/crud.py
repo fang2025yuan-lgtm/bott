@@ -1,5 +1,6 @@
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
+from sqlalchemy.orm import selectinload
 from bot.database.models import User, Club, Event, Registration, Ticket, EventStatus, RegStatus, RoleEnum, UserStatus
 from bot.database.db import AsyncSessionLocal
 from bot.utils.ticket_generator import generate_pin, generate_security_hash, generate_qr_data, generate_ticket_image
@@ -54,14 +55,26 @@ async def update_user_role(telegram_id: int, role: RoleEnum):
 # --- CLUB FUNCTIONS ---
 async def get_all_clubs():
     async with AsyncSessionLocal() as session:
-        result = await session.execute(select(Club))
+        result = await session.execute(select(Club).options(selectinload(Club.users)))
         return result.scalars().all()
 
-async def create_club(name: str):
+async def create_club(name: str, president_tg_id: int = None):
     async with AsyncSessionLocal() as session:
         try:
             new_club = Club(club_name=name)
             session.add(new_club)
+            await session.flush()
+
+            if president_tg_id:
+                user_result = await session.execute(
+                    select(User).where(User.telegram_id == president_tg_id)
+                )
+                user = user_result.scalars().first()
+                if user:
+                    user.role = RoleEnum.PRESIDENT
+                    user.club_id = new_club.id
+                    new_club.president_id = user.id
+
             await session.commit()
             await session.refresh(new_club)
             return new_club, "Muvaffaqiyatli yaratildi."
@@ -82,7 +95,35 @@ async def get_event_by_id(event_id: int):
         result = await session.execute(select(Event).where(Event.id == event_id))
         return result.scalars().first()
 
-async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int):
+async def get_events_by_club(club_id: int):
+    """Klub bo'yicha ACTIVE tadbirlarni olish"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Event).where(
+                Event.club_id == club_id,
+                Event.status == EventStatus.ACTIVE
+            ).order_by(Event.id.desc())
+        )
+        return result.scalars().all()
+
+ALLOWED_EVENT_FIELDS = {
+    'title', 'description', 'post_link', 'registration_points',
+    'attendance_points', 'status', 'event_date', 'location', 'check_in_enabled'
+}
+
+async def update_event_field(event_id: int, field_name: str, value):
+    """Tadbir maydonini alohida yangilash"""
+    if field_name not in ALLOWED_EVENT_FIELDS:
+        return False, "Noto'g'ri maydon nomi"
+    async with AsyncSessionLocal() as session:
+        event = await session.get(Event, event_id)
+        if not event:
+            return False, "Tadbir topilmadi"
+        setattr(event, field_name, value)
+        await session.commit()
+        return True, "Tadbir yangilandi"
+
+async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int, event_date=None, location=None, check_in_enabled=False, club_id_override: int = None):
     async with AsyncSessionLocal() as session:
         user_res = await session.execute(select(User).where(User.telegram_id == created_by_tg_id))
         user = user_res.scalars().first()
@@ -90,14 +131,19 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
         if not user: 
             return False, "Foydalanuvchi topilmadi"
         
+        club_id = club_id_override if club_id_override is not None else user.club_id
+        
         new_event = Event(
             title=title,
             description=desc,
             post_link=link,
-            club_id=user.club_id,
+            club_id=club_id,
             registration_points=reg_pts,
             attendance_points=att_pts,
-            created_by=user.id
+            created_by=user.id,
+            event_date=event_date,
+            location=location,
+            check_in_enabled=check_in_enabled
         )
         session.add(new_event)
         await session.commit()
@@ -118,6 +164,7 @@ async def register_user_for_event(user_tg_id: int, event_id: int):
             new_reg = Registration(user_id=user.id, event_id=event_id)
             session.add(new_reg)
             user.total_points += event.registration_points
+            user.user_status = calculate_user_status(user.total_points)
             await session.commit()
             return True, f"Muvaffaqiyatli! Sizga {event.registration_points} ball qo'shildi."
         except IntegrityError:
@@ -128,7 +175,7 @@ async def get_top_users(limit: int = 10):
     async with AsyncSessionLocal() as session:
         result = await session.execute(
             select(User).where(
-                User.role.in_([RoleEnum.USER])  # Faqat oddiy foydalanuvchilar
+                User.role != RoleEnum.SUPER_ADMIN  # SUPER_ADMIN dan boshqa hamma
             ).order_by(desc(User.total_points)).limit(limit)
         )
         return result.scalars().all()
@@ -170,10 +217,33 @@ async def mark_attendance(reg_id: int, status: RegStatus):
 
         if status == RegStatus.ATTENDED and reg.status != RegStatus.ATTENDED:
             user.total_points += event.attendance_points
+            # Chiptani ishlatilgan deb belgilash
+            ticket_result = await session.execute(
+                select(Ticket).where(
+                    Ticket.user_id == user.id,
+                    Ticket.event_id == reg.event_id
+                )
+            )
+            ticket = ticket_result.scalars().first()
+            if ticket:
+                ticket.is_used = True
+                ticket.used_at = datetime.utcnow()
         elif status != RegStatus.ATTENDED and reg.status == RegStatus.ATTENDED:
             user.total_points = max(0, user.total_points - event.attendance_points)
+            # Chiptani qaytarish
+            ticket_result = await session.execute(
+                select(Ticket).where(
+                    Ticket.user_id == user.id,
+                    Ticket.event_id == reg.event_id
+                )
+            )
+            ticket = ticket_result.scalars().first()
+            if ticket:
+                ticket.is_used = False
+                ticket.used_at = None
             
         reg.status = status
+        user.user_status = calculate_user_status(user.total_points)
         await session.commit()
         return True
 
@@ -218,7 +288,9 @@ async def create_ticket(user_tg_id: int, event_id: int):
     """
     async with AsyncSessionLocal() as session:
         # Foydalanuvchini topish
-        user_result = await session.execute(select(User).where(User.telegram_id == user_tg_id))
+        user_result = await session.execute(
+            select(User).where(User.telegram_id == user_tg_id).options(selectinload(User.club))
+        )
         user = user_result.scalars().first()
         if not user:
             return None, "Foydalanuvchi topilmadi"
@@ -235,34 +307,52 @@ async def create_ticket(user_tg_id: int, event_id: int):
         if existing.scalars().first():
             return None, "Allaqachon chipta mavjud"
         
-        # PIN va xavfsizlik hash generatsiya
-        pin = generate_pin()
-        timestamp = datetime.utcnow().isoformat()
-        security_hash = generate_security_hash(user.id, event_id, pin, timestamp)
-        qr_data = generate_qr_data(event_id, user.telegram_id, security_hash)
+        # Save user data before retry loop to avoid expired object issues after rollback
+        saved_user_id = user.id
+        saved_user_full_name = user.full_name
+        saved_user_total_points = user.total_points
+        saved_user_telegram_id = user.telegram_id
+        saved_club_name = user.club.club_name if user.club else "UFQ Community"
+        saved_event_title = event.title
+        saved_event_date = event.event_date
         
-        # Ticket yaratish
-        ticket = Ticket(
-            user_id=user.id,
-            event_id=event_id,
-            ticket_pin=pin,
-            security_hash=security_hash,
-            qr_data=qr_data
-        )
-        session.add(ticket)
+        # PIN va xavfsizlik hash generatsiya (retry loop for PIN collision)
+        max_attempts = 5
+        for attempt in range(max_attempts):
+            pin = generate_pin()
+            security_hash = generate_security_hash(saved_user_id, event_id, pin)
+            qr_data = generate_qr_data(event_id, saved_user_telegram_id, security_hash)
+            
+            # Ticket yaratish
+            ticket = Ticket(
+                user_id=saved_user_id,
+                event_id=event_id,
+                ticket_pin=pin,
+                security_hash=security_hash,
+                qr_data=qr_data
+            )
+            session.add(ticket)
+            try:
+                await session.flush()
+                break
+            except IntegrityError:
+                await session.rollback()
+                if attempt == max_attempts - 1:
+                    return None, "PIN generatsiya qilishda xatolik. Qaytadan urinib ko'ring."
+                continue
+        
         await session.commit()
         await session.refresh(ticket)
         
-        # Chipta rasmini generatsiya qilish
-        club_name = user.club.club_name if user.club else "UFQ Community"
-        event_date = event.event_date.strftime("%d-%b, %H:%M") if event.event_date else "Tez orada"
+        # Chipta rasmini generatsiya qilish (using saved data to avoid detached instance issues)
+        event_date_str = saved_event_date.strftime("%d-%b, %H:%M") if saved_event_date else "Tez orada"
         
         ticket_image = await generate_ticket_image(
-            user_full_name=user.full_name,
-            user_points=user.total_points,
-            event_title=event.title,
-            event_date=event_date,
-            club_name=club_name,
+            user_full_name=saved_user_full_name,
+            user_points=saved_user_total_points,
+            event_title=saved_event_title,
+            event_date=event_date_str,
+            club_name=saved_club_name,
             pin=pin,
             qr_data=qr_data
         )
@@ -272,7 +362,7 @@ async def create_ticket(user_tg_id: int, event_id: int):
 async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: int):
     """
     QR kod skanerlash va check-in amalga oshirish
-    Returns: (success: bool, message: str, user_name: str or None)
+    Returns: (success: bool, message: str, user_name: str or None, user_telegram_id: int or None)
     """
     async with AsyncSessionLocal() as session:
         # Scanner vakolatini tekshirish
@@ -280,7 +370,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         scanner = scanner_result.scalars().first()
         
         if not scanner or scanner.role not in [RoleEnum.VP, RoleEnum.PRESIDENT, RoleEnum.SUPER_ADMIN]:
-            return False, "❌ Sizda skanerlash huquqi yo'q!", None
+            return False, "❌ Sizda skanerlash huquqi yo'q!", None, None
         
         # Chiptani topish
         ticket_result = await session.execute(
@@ -292,24 +382,28 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         ticket = ticket_result.scalars().first()
         
         if not ticket:
-            return False, "❌ Noto'g'ri yoki yaroqsiz chipta!", None
+            return False, "❌ Noto'g'ri yoki yaroqsiz chipta!", None, None
         
         # Allaqachon ishlatilganmi?
         if ticket.is_used:
             used_time = ticket.used_at.strftime("%H:%M") if ticket.used_at else "noma'lum vaqt"
-            return False, f"⚠️ Bu chipta allaqachon ishlatilgan!\nSkanerlangan vaqt: {used_time}", None
+            return False, f"⚠️ Bu chipta allaqachon ishlatilgan!\nSkanerlangan vaqt: {used_time}", None, None
         
         # Eventni va foydalanuvchini olish
         event = await session.get(Event, event_id)
         user = await session.get(User, ticket.user_id)
         
         if not event or not user:
-            return False, "❌ Xatolik: Ma'lumot topilmadi", None
+            return False, "❌ Xatolik: Ma'lumot topilmadi", None, None
+        
+        # Check-in yoqilganmi tekshirish
+        if not event.check_in_enabled:
+            return False, "❌ QR skanerlash bu tadbir uchun yoqilmagan!", None, None
         
         # Scanner ushbu klubning admin bo'lishi kerak
         if scanner.role != RoleEnum.SUPER_ADMIN:
             if not event.club_id or scanner.club_id != event.club_id:
-                return False, "❌ Siz bu tadbirni boshqara olmaysiz!", None
+                return False, "❌ Siz bu tadbirni boshqara olmaysiz!", None, None
         
         # Registration ni yangilash
         reg_result = await session.execute(
@@ -321,7 +415,11 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         registration = reg_result.scalars().first()
         
         if not registration:
-            return False, "❌ Foydalanuvchi bu tadbirga ro'yxatdan o'tmagan!", None
+            return False, "❌ Foydalanuvchi bu tadbirga ro'yxatdan o'tmagan!", None, None
+        
+        # Allaqachon tashrif buyurganmi tekshirish
+        if registration.status == RegStatus.ATTENDED:
+            return False, "⚠️ Bu foydalanuvchi allaqachon tashrif buyurgan!", None, None
         
         # Check-in amalga oshirish
         ticket.is_used = True
@@ -348,7 +446,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         
         success_msg = f"✅ Muvaffaqiyatli!\n\n👤 {user.full_name}\n📅 {event.title}\n🎁 +{event.attendance_points} ball qo'shildi (Jami: {user.total_points}){status_change_msg}"
         
-        return True, success_msg, user.full_name
+        return True, success_msg, user.full_name, user.telegram_id
 
 async def update_user_status_if_needed(user_id: int):
     """Foydalanuvchi statusini yangilash (ball o'zgarsa)"""
@@ -361,3 +459,118 @@ async def update_user_status_if_needed(user_id: int):
         if user.user_status != new_status:
             user.user_status = new_status
             await session.commit()
+
+
+# --- SUPER ADMIN CRUD FUNCTIONS ---
+
+async def get_all_users(limit: int = 20, offset: int = 0):
+    """Barcha foydalanuvchilarni sahifalab olish"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(User).order_by(desc(User.total_points)).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+
+async def get_all_events(limit: int = 20, offset: int = 0):
+    """Barcha tadbirlarni sahifalab olish (holati bo'yicha filter yo'q)"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Event).order_by(desc(Event.id)).limit(limit).offset(offset)
+        )
+        return result.scalars().all()
+
+
+async def update_event(event_id: int, **kwargs):
+    """Tadbir maydonlarini yangilash"""
+    async with AsyncSessionLocal() as session:
+        event = await session.get(Event, event_id)
+        if not event:
+            return False, "Tadbir topilmadi"
+        for key, value in kwargs.items():
+            if key not in ALLOWED_EVENT_FIELDS:
+                continue
+            setattr(event, key, value)
+        await session.commit()
+        return True, "Tadbir yangilandi"
+
+
+async def cancel_event(event_id: int):
+    """Tadbirni bekor qilish (CANCELLED holatiga o'tkazish)"""
+    async with AsyncSessionLocal() as session:
+        event = await session.get(Event, event_id)
+        if not event:
+            return False, "Tadbir topilmadi"
+        event.status = EventStatus.CANCELLED
+        await session.commit()
+        return True, "Tadbir bekor qilindi"
+
+
+async def update_user_club(telegram_id: int, club_id: int):
+    """Foydalanuvchining klubini o'zgartirish"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalars().first()
+        if not user:
+            return False, "Foydalanuvchi topilmadi"
+        # Klubni tekshirish
+        club = await session.get(Club, club_id)
+        if not club:
+            return False, "Klub topilmadi"
+        user.club_id = club_id
+        await session.commit()
+        return True, f"Foydalanuvchi '{club.club_name}' klubiga o'tkazildi"
+
+
+async def update_user_points(telegram_id: int, points: int):
+    """Foydalanuvchi ballarini o'rnatish va statusni qayta hisoblash"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(select(User).where(User.telegram_id == telegram_id))
+        user = result.scalars().first()
+        if not user:
+            return False, "Foydalanuvchi topilmadi"
+        user.total_points = points
+        user.user_status = calculate_user_status(points)
+        await session.commit()
+        return True, f"Ballar {points} ga o'rnatildi. Status: {user.user_status.value}"
+
+
+async def get_club_by_id(club_id: int):
+    """Klubni ID bo'yicha olish"""
+    async with AsyncSessionLocal() as session:
+        return await session.get(Club, club_id)
+
+
+async def delete_club(club_id: int):
+    """Klubni o'chirish"""
+    async with AsyncSessionLocal() as session:
+        club = await session.get(Club, club_id)
+        if not club:
+            return False, "Klub topilmadi"
+        await session.delete(club)
+        await session.commit()
+        return True, f"'{club.club_name}' klubi o'chirildi"
+
+
+async def get_users_count():
+    """Jami foydalanuvchilar sonini olish"""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func
+        result = await session.execute(select(func.count(User.id)))
+        return result.scalar() or 0
+
+
+async def get_events_count():
+    """Jami tadbirlar sonini olish"""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func
+        result = await session.execute(select(func.count(Event.id)))
+        return result.scalar() or 0
+
+
+async def get_clubs_count():
+    """Jami klublar sonini olish"""
+    async with AsyncSessionLocal() as session:
+        from sqlalchemy import func
+        result = await session.execute(select(func.count(Club.id)))
+        return result.scalar() or 0

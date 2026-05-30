@@ -1,0 +1,48 @@
+{
+  "id": "FEAT-002",
+  "type": "fix",
+  "description": "Fix all handler, middleware, and infrastructure bugs (BUG-001, BUG-005, BUG-009, BUG-010, BUG-011, BUG-014, BUG-015, BUG-016, BUG-017, BUG-019, BUG-020).",
+  "status": "completed",
+  "steps": [
+    "STEP 1 - BUG-001: In bot/handlers/admin.py: (a) Add 3 new states to EventState: waiting_for_event_date, waiting_for_location, waiting_for_check_in. (b) After the attendance points step (add_event_att_pts), instead of creating the event, save att_pts to state and ask for event date (format: DD.MM.YYYY HH:MM or '-' to skip). (c) Add handler for waiting_for_event_date that parses the date (datetime.strptime with format '%d.%m.%Y %H:%M') or None if '-', saves to state, asks for location. (d) Add handler for waiting_for_location that saves location (or None if '-'), asks for check_in_enabled (Ha/Yo'q). (e) Add handler for waiting_for_check_in that parses yes/no (Ha=True, Yo'q/boshqa=False), then calls create_event with all fields. (f) In bot/database/crud.py create_event(): Add parameters event_date=None, location=None, check_in_enabled=False. Set them on the new Event object.",
+    "STEP 2 - BUG-005: In bot/handlers/user.py show_my_results(): Change the 'remaining points' calculation to use max(0, threshold - points). Specifically: '16 - points' becomes 'max(0, 16 - points)', '51 - points' becomes 'max(0, 51 - points)', '121 - points' becomes 'max(0, 121 - points)'. Also, before displaying, call the recalculated status: import calculate_user_status, recalculate status from points, and use that for display instead of potentially stale user.user_status.",
+    "STEP 3 - BUG-009: In bot/database/crud.py verify_and_checkin(): After fetching the event, check if event.check_in_enabled is True. If not, return (False, 'QR skanerlash bu tadbir uchun yoqilmagan!', None).",
+    "STEP 4 - BUG-010: In bot/handlers/scanner.py handle_deep_link(): Remove 'from bot.main import bot'. Instead, add 'bot' parameter to the handler function signature (aiogram 3.x injects it automatically from dispatcher data). Use that bot parameter for send_message. The handler signature becomes: async def handle_deep_link(message: Message, command: CommandObject, bot: Bot). Add 'from aiogram import Bot' import.",
+    "STEP 5 - BUG-011: In bot/middlewares/check_sub.py: At the beginning of __call__, after getting user_id, check if the event is a Message with text starting with '/start chk_'. If so, bypass the subscription check (return await handler(event, data)). Specifically: if isinstance(event, Message) and event.text and event.text.startswith('/start chk_'): return await handler(event, data).",
+    "STEP 6 - BUG-014: In bot/handlers/events.py show_active_events(): The current code has a rate limit check at (i+1) % 20 but the function only fetches limit=10 events. This dead code is harmless but confusing. Remove the asyncio import and the rate-limit sleep block since we never exceed 10 messages, OR change the limit to match. Best to just remove the dead code (the asyncio import and the if block).",
+    "STEP 7 - BUG-015: In .env.example: Ensure BOT_USERNAME is present with a comment explaining its purpose. Currently it IS present, so just add a comment line above it: '# Bot username (without @) - used for QR deep links'.",
+    "STEP 8 - BUG-016: In deploy_bot.sh: Before the 'sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL' line, add a database backup step: if the .db file exists, copy it to /tmp/ufq_events_backup.db. After deploying (after venv setup), restore the database from backup if the backup exists: cp /tmp/ufq_events_backup.db to the new location.",
+    "STEP 9 - BUG-017: In requirements.txt: Remove the lines 'openpyxl==3.1.2' and 'pandas==2.2.0'.",
+    "STEP 10 - BUG-019: In bot/handlers/start.py process_club_selection(): Move 'await call.answer()' from the end of the function to right after the initial validation checks (after parsing club_id successfully, before any async DB operations). The current code calls call.answer() at the very end which can timeout.",
+    "STEP 11 - BUG-020: In bot/handlers/scanner.py handle_deep_link(): After verify_and_checkin succeeds, before sending notification to user_tg_id, verify that user_tg_id from the URL actually matches the ticket owner. Get the ticket's user via the DB and compare telegram_id. If mismatch, log a warning and skip notification. Actually, the simplest fix: pass user_tg_id to verify_and_checkin and have it verify internally, OR after success, use the returned info. The current code already looks up the user by user_tg_id, but doesn't verify it matches the ticket. Add a check: query the ticket by security_hash and event_id, get ticket.user_id, then get that user's telegram_id, and compare with user_tg_id from URL. If mismatch, skip notification (or send to the real owner instead). Best approach: after verify_and_checkin returns success, get the real user from ticket (we can return user_tg_id from verify_and_checkin as part of the tuple). Modify verify_and_checkin to return (success, msg, user_full_name, user_telegram_id) - add the actual user's telegram_id. Then in handle_deep_link, use the returned telegram_id for notification instead of the URL one."
+  ],
+  "acceptance_criteria": [
+    "Event creation FSM asks for event_date, location, and check_in_enabled",
+    "create_event() accepts and stores event_date, location, check_in_enabled",
+    "show_my_results() never shows negative remaining points",
+    "verify_and_checkin() checks event.check_in_enabled before processing",
+    "scanner.py does not import from bot.main - uses bot parameter injection",
+    "CheckSubMiddleware bypasses subscription check for /start chk_ deep links",
+    "show_active_events() has no dead rate-limit code",
+    ".env.example has BOT_USERNAME with documentation comment",
+    "deploy_bot.sh backs up database before removing old directory",
+    "requirements.txt does not contain openpyxl or pandas",
+    "process_club_selection() calls call.answer() early",
+    "Notification is sent to the actual ticket owner, not blindly to URL user_tg_id"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/bott/UFQ_EVENT_BOT_FINAL && python -m py_compile bot/handlers/admin.py && echo OK",
+    "Run: python -m py_compile bot/handlers/user.py && echo OK",
+    "Run: python -m py_compile bot/handlers/scanner.py && echo OK",
+    "Run: python -m py_compile bot/handlers/events.py && echo OK",
+    "Run: python -m py_compile bot/handlers/start.py && echo OK",
+    "Run: python -m py_compile bot/middlewares/check_sub.py && echo OK",
+    "Run: python -m py_compile bot/database/crud.py && echo OK",
+    "Run: python -c \"from bot.handlers.admin import EventState; assert hasattr(EventState, 'waiting_for_event_date'); assert hasattr(EventState, 'waiting_for_location'); assert hasattr(EventState, 'waiting_for_check_in'); print('PASS')\"",
+    "Run: grep -q 'openpyxl' requirements.txt && echo FAIL || echo PASS",
+    "Run: grep -q 'pandas' requirements.txt && echo FAIL || echo PASS",
+    "Run: grep -q 'from bot.main import bot' bot/handlers/scanner.py && echo FAIL || echo PASS"
+  ],
+  "blocked_reason": null,
+  "findings": "All 11 steps implemented and verified via py_compile and import checks. verify_and_checkin now returns a 4-tuple (success, msg, user_full_name, user_telegram_id). The event creation FSM flow now has 8 steps total (title, desc, link, reg_pts, att_pts, event_date, location, check_in). The Event model already had event_date, location, and check_in_enabled columns defined."
+}

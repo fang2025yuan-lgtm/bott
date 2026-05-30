@@ -5,19 +5,39 @@ echo "================================================="
 echo "   UFQ EVENT BOT (FINAL) - DEPLOY SCRIPT         "
 echo "================================================="
 
-# Eski botni to'xtatish va o'chirish
-echo ">>> Eski bot versiyasini tekshirish..."
-if [ -d "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
-    echo "Eski versiya topildi. To'xtatish va o'chirish..."
-    sudo systemctl stop ufq-event-bot 2>/dev/null || true
-    sudo systemctl disable ufq-event-bot 2>/dev/null || true
-    sudo rm -f /etc/systemd/system/ufq-event-bot.service
-    sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
-    echo "Eski versiya tozalandi."
-fi
-
 # Joriy papkani aniqlash
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# Agar script /home/ubuntu/UFQ_EVENT_BOT_FINAL dan ishga tushirilmagan bo'lsa,
+# eski versiyani to'xtatish va o'chirish
+if [ "$SCRIPT_DIR" != "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
+    echo ">>> Eski bot versiyasini tekshirish..."
+    if [ -d "/home/ubuntu/UFQ_EVENT_BOT_FINAL" ]; then
+        echo "Eski versiya topildi. To'xtatish va o'chirish..."
+        sudo systemctl stop ufq-event-bot 2>/dev/null || true
+        sudo systemctl disable ufq-event-bot 2>/dev/null || true
+        sudo rm -f /etc/systemd/system/ufq-event-bot.service
+        # Ma'lumotlar bazasini zaxiralash
+        if [ -f "/home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db" ]; then
+            echo ">>> Ma'lumotlar bazasi zaxiralanmoqda..."
+            mkdir -p /home/ubuntu/ufq_db_backup
+            cp /home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db /home/ubuntu/ufq_db_backup/ufq_events_backup.db
+            echo "Zaxira yaratildi: /home/ubuntu/ufq_db_backup/ufq_events_backup.db"
+        fi
+        sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
+        echo "Eski versiya tozalandi."
+    fi
+    
+    # Yangi versiyani /home/ubuntu/UFQ_EVENT_BOT_FINAL ga ko'chirish
+    echo ">>> Yangi versiyani joylashtirish..."
+    sudo cp -r "$SCRIPT_DIR" /home/ubuntu/UFQ_EVENT_BOT_FINAL
+    SCRIPT_DIR="/home/ubuntu/UFQ_EVENT_BOT_FINAL"
+    cd "$SCRIPT_DIR"
+    echo "Yangi versiya joylashtirildi: $SCRIPT_DIR"
+else
+    echo ">>> Script to'g'ri joyda ishlamoqda: $SCRIPT_DIR"
+fi
+
 cd "$SCRIPT_DIR"
 
 echo ""
@@ -25,12 +45,15 @@ echo "Botni ishga tushirish uchun ma'lumotlarni kiriting:"
 read -p "1. Telegram Bot Tokenini kiriting: " bot_token
 read -p "2. SUPER_ADMIN Telegram ID raqamini kiriting: " admin_id
 read -p "3. Majburiy kanallarni kiriting (Vergul bilan ajrating, misol: -1001234,@kanal): " channels
+read -p "4. Bot Username (@ belgisisiz, masalan: ufq_events_bot): " bot_username
+bot_username=${bot_username:-ufq_events_bot}
 
-# .env faylini yaratish (heredoc ichida o'zgaruvchilar kengayishi uchun qo'shtirnoqsiz)
+# .env faylini yaratish
 cat << EOF > "$SCRIPT_DIR/.env"
 BOT_TOKEN=$bot_token
 SUPER_ADMIN_ID=$admin_id
 CHANNELS=$channels
+BOT_USERNAME=$bot_username
 DATABASE_URL=sqlite+aiosqlite:///ufq_events.db
 EOF
 
@@ -44,6 +67,13 @@ sudo apt-get install -y python3-venv python3-pip
 rm -rf "$SCRIPT_DIR/venv"
 python3 -m venv "$SCRIPT_DIR/venv"
 "$SCRIPT_DIR/venv/bin/pip" install -r "$SCRIPT_DIR/requirements.txt"
+
+# Ma'lumotlar bazasini tiklash
+if [ -f "/home/ubuntu/ufq_db_backup/ufq_events_backup.db" ]; then
+    echo ">>> Ma'lumotlar bazasi tiklanmoqda..."
+    cp /home/ubuntu/ufq_db_backup/ufq_events_backup.db "$SCRIPT_DIR/ufq_events.db"
+    echo "Ma'lumotlar bazasi tiklandi."
+fi
 
 echo ">>> Fayl huquqlari to'g'rilanmoqda..."
 sudo chown -R $(whoami):$(whoami) "$SCRIPT_DIR"

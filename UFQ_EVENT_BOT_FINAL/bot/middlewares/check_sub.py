@@ -20,6 +20,10 @@ class CheckSubMiddleware(BaseMiddleware):
         if user_id == SUPER_ADMIN_ID:
             return await handler(event, data)
         
+        # QR check-in deep link uchun tekshiruvni o'tkazib yuborish
+        if isinstance(event, Message) and event.text and event.text.startswith('/start chk_'):
+            return await handler(event, data)
+        
         # Agar CHANNELS bo'sh bo'lsa, tekshiruv o'tkazilmaydi
         if not CHANNELS:
             return await handler(event, data)

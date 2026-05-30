@@ -1,0 +1,33 @@
+{
+  "id": "FEAT-005",
+  "type": "fix",
+  "description": "Address semantic review issues: update_event_field allowlist, deep-link maxsplit, create_ticket session safety, deploy backup path, get_all_clubs eager loading, and migration for new Event columns.",
+  "status": "completed",
+  "steps": [
+    "STEP 1 - Add allowlist to update_event_field in crud.py",
+    "STEP 2 - Fix deep-link hash parsing with maxsplit in scanner.py",
+    "STEP 3 - Fix create_ticket retry loop by saving user data before the loop",
+    "STEP 4 - Change deploy_bot.sh backup path from /tmp to persistent directory",
+    "STEP 5 - Add selectinload(Club.users) to get_all_clubs in crud.py",
+    "STEP 6 - Add migration check in init_db for new Event columns"
+  ],
+  "acceptance_criteria": [
+    "update_event_field rejects field names not in the allowlist",
+    "Deep-link split uses maxsplit=3 to preserve underscores in hash",
+    "create_ticket saves user data before retry loop for ticket image generation",
+    "deploy_bot.sh uses /home/ubuntu/ufq_db_backup/ instead of /tmp",
+    "get_all_clubs uses selectinload(Club.users) to eagerly load users",
+    "init_db checks for and adds missing event_date, location, check_in_enabled columns"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/bott/UFQ_EVENT_BOT_FINAL && python -m py_compile bot/database/crud.py && echo OK",
+    "Run: python -m py_compile bot/handlers/scanner.py && echo OK",
+    "Run: python -m py_compile bot/database/db.py && echo OK",
+    "Run: grep -q 'ALLOWED_FIELDS' bot/database/crud.py && echo PASS || echo FAIL",
+    "Run: grep -q 'maxsplit' bot/handlers/scanner.py && echo PASS || echo FAIL",
+    "Run: grep -q '/home/ubuntu/ufq_db_backup' deploy_bot.sh && echo PASS || echo FAIL",
+    "Run: grep -q 'selectinload' bot/database/crud.py && echo PASS || echo FAIL"
+  ],
+  "blocked_reason": null,
+  "findings": "All 6 fixes implemented and verified via py_compile and import checks. The allowlist uses a set for O(1) lookup. The migration function checks PRAGMA table_info before running ALTER TABLE statements. The create_ticket function now saves all user/event data to local variables before the retry loop."
+}
