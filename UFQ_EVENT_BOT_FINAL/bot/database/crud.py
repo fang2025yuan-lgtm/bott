@@ -58,11 +58,23 @@ async def get_all_clubs():
         result = await session.execute(select(Club))
         return result.scalars().all()
 
-async def create_club(name: str):
+async def create_club(name: str, president_tg_id: int = None):
     async with AsyncSessionLocal() as session:
         try:
             new_club = Club(club_name=name)
             session.add(new_club)
+            await session.flush()
+
+            if president_tg_id:
+                user_result = await session.execute(
+                    select(User).where(User.telegram_id == president_tg_id)
+                )
+                user = user_result.scalars().first()
+                if user:
+                    user.role = RoleEnum.PRESIDENT
+                    user.club_id = new_club.id
+                    new_club.president_id = user.id
+
             await session.commit()
             await session.refresh(new_club)
             return new_club, "Muvaffaqiyatli yaratildi."
@@ -83,7 +95,30 @@ async def get_event_by_id(event_id: int):
         result = await session.execute(select(Event).where(Event.id == event_id))
         return result.scalars().first()
 
-async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int, event_date=None, location=None, check_in_enabled=False):
+async def get_events_by_club(club_id: int):
+    """Klub bo'yicha ACTIVE tadbirlarni olish"""
+    async with AsyncSessionLocal() as session:
+        result = await session.execute(
+            select(Event).where(
+                Event.club_id == club_id,
+                Event.status == EventStatus.ACTIVE
+            ).order_by(Event.id.desc())
+        )
+        return result.scalars().all()
+
+async def update_event_field(event_id: int, field_name: str, value):
+    """Tadbir maydonini alohida yangilash"""
+    async with AsyncSessionLocal() as session:
+        event = await session.get(Event, event_id)
+        if not event:
+            return False, "Tadbir topilmadi"
+        if not hasattr(event, field_name):
+            return False, "Noto'g'ri maydon nomi"
+        setattr(event, field_name, value)
+        await session.commit()
+        return True, "Tadbir yangilandi"
+
+async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int, event_date=None, location=None, check_in_enabled=False, club_id_override: int = None):
     async with AsyncSessionLocal() as session:
         user_res = await session.execute(select(User).where(User.telegram_id == created_by_tg_id))
         user = user_res.scalars().first()
@@ -91,11 +126,13 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
         if not user: 
             return False, "Foydalanuvchi topilmadi"
         
+        club_id = club_id_override if club_id_override is not None else user.club_id
+        
         new_event = Event(
             title=title,
             description=desc,
             post_link=link,
-            club_id=user.club_id,
+            club_id=club_id,
             registration_points=reg_pts,
             attendance_points=att_pts,
             created_by=user.id,

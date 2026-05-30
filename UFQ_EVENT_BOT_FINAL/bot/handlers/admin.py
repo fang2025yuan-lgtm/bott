@@ -1,5 +1,5 @@
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
@@ -8,9 +8,10 @@ from bot.database.crud import (
     get_user_by_tg_id, create_club, promote_user, get_event_by_id,
     get_all_users, get_all_events, update_event, cancel_event,
     update_user_club, update_user_points, get_club_by_id, delete_club,
-    get_all_clubs, get_users_count, get_events_count, get_clubs_count
+    get_all_clubs, get_users_count, get_events_count, get_clubs_count,
+    get_events_by_club, update_event_field
 )
-from bot.database.models import RegStatus, EventStatus
+from bot.database.models import RegStatus, EventStatus, RoleEnum
 from bot.keyboards.menus import (
     admin_events_keyboard, attendance_keyboard,
     super_admin_menu_keyboard, user_management_keyboard,
@@ -34,6 +35,7 @@ class EventState(StatesGroup):
 
 class ClubState(StatesGroup):
     waiting_for_name = State()
+    waiting_for_president_id = State()
 
 class PromoteState(StatesGroup):
     waiting_for_id = State()
@@ -49,6 +51,10 @@ class SAEditEventState(StatesGroup):
     waiting_for_title = State()
     waiting_for_points = State()
     waiting_for_status = State()
+
+class EditEventState(StatesGroup):
+    waiting_for_field = State()
+    waiting_for_value = State()
 
 async def check_admin(user_id: int, allowed_roles: list, club_id_needed: int = None):
     user = await get_user_by_tg_id(user_id)
@@ -91,9 +97,39 @@ async def process_club_name(message: Message, state: FSMContext):
         await state.clear()
         return await message.answer("Bekor qilindi.")
     
-    club, msg = await create_club(message.text)
+    await state.update_data(club_name=message.text)
+    await message.answer("Klub prezidentining Telegram ID raqamini kiriting (yoki o'tkazib yuborish uchun '-' yozing):")
+    await state.set_state(ClubState.waiting_for_president_id)
+
+@admin_router.message(ClubState.waiting_for_president_id)
+async def process_club_president_id(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['SUPER_ADMIN']): return await state.clear()
+    if not message.text: return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+    
+    data = await state.get_data()
+    club_name = data['club_name']
+    president_tg_id = None
+    extra_msg = ""
+
+    if message.text.strip() != '-':
+        if not message.text.strip().isdigit():
+            return await message.answer("Telegram ID faqat raqam bo'lishi kerak! Qaytadan kiriting yoki '-' bosing:")
+        president_tg_id = int(message.text.strip())
+        user = await get_user_by_tg_id(president_tg_id)
+        if not user:
+            extra_msg = "\n⚠️ Bu foydalanuvchi hali ro'yxatdan o'tmagan. Klub yaratildi, lekin prezident tayinlanmadi."
+            president_tg_id = None
+
+    club, msg = await create_club(club_name, president_tg_id=president_tg_id)
     if club:
-        await message.answer(f"✅ '{message.text}' klubi yaratildi!")
+        result_msg = f"✅ '{club_name}' klubi yaratildi!"
+        if president_tg_id:
+            result_msg += f"\n👑 Prezident tayinlandi (TG ID: {president_tg_id})"
+        result_msg += extra_msg
+        await message.answer(result_msg)
     else:
         await message.answer(f"❌ Xatolik: {msg}")
     await state.clear()
@@ -129,9 +165,17 @@ async def process_promote(message: Message, state: FSMContext):
 async def show_admin_panel(message: Message):
     if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']): 
         return
-    events = await get_active_events(limit=20)
+    user = await get_user_by_tg_id(message.from_user.id)
+    if not user:
+        return
+
+    if user.role.value in ('PRESIDENT', 'VP') and user.club_id:
+        events = await get_events_by_club(user.club_id)
+    else:
+        events = await get_active_events(limit=20)
+
     if not events:
-        await message.answer("Hozircha ochiq tadbirlar yo'q. Yangi tadbir yaratishingiz mumkin:", reply_markup=admin_events_keyboard([]))
+        await message.answer("Hozircha ochiq tadbirlar yo'q. Yangi tadbir yaratishingiz mumkin:", reply_markup=admin_events_keyboard(events))
     else:
         await message.answer("Boshqarish uchun tadbirni tanlang:", reply_markup=admin_events_keyboard(events))
 
@@ -223,7 +267,11 @@ async def process_attendance(call: CallbackQuery):
 async def add_event_start(call: CallbackQuery, state: FSMContext):
     if not await check_admin(call.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']): 
         return await call.answer("Xuxuq yo'q", show_alert=True)
-        
+    
+    user = await get_user_by_tg_id(call.from_user.id)
+    if user and user.role.value in ('PRESIDENT', 'VP') and user.club_id:
+        await state.update_data(club_id_override=user.club_id)
+    
     await call.message.answer("1️⃣ Yangi tadbir sarlavhasini kiriting (Bekor qilish: /cancel):")
     await state.set_state(EventState.waiting_for_title)
     await call.answer()
@@ -356,6 +404,7 @@ async def add_event_check_in(message: Message, state: FSMContext):
     check_in_enabled = message.text.strip().lower() in ['ha', 'yes', 'da']
     
     data = await state.get_data()
+    club_id_override = data.get('club_id_override')
     
     success, msg = await create_event(
         title=data['title'],
@@ -366,13 +415,192 @@ async def add_event_check_in(message: Message, state: FSMContext):
         created_by_tg_id=message.from_user.id,
         event_date=data.get('event_date'),
         location=data.get('location'),
-        check_in_enabled=check_in_enabled
+        check_in_enabled=check_in_enabled,
+        club_id_override=club_id_override
     )
     
     if success:
         await message.answer(f"✅ {msg}")
     else:
         await message.answer(f"❌ Xatolik: {msg}")
+    await state.clear()
+
+
+# =============================================
+# PRESIDENT/VP EVENT EDIT HANDLERS
+# =============================================
+
+def president_edit_event_keyboard(event_id: int):
+    """Prezident uchun tadbir tahrirlash tugmalari"""
+    kb = [
+        [InlineKeyboardButton(text="✏️ Sarlavha", callback_data=f"pedit_title_{event_id}")],
+        [InlineKeyboardButton(text="📝 Tavsif", callback_data=f"pedit_desc_{event_id}")],
+        [InlineKeyboardButton(text="🔗 Post havola", callback_data=f"pedit_link_{event_id}")],
+        [InlineKeyboardButton(text="🎯 Reg ball", callback_data=f"pedit_regpts_{event_id}"),
+         InlineKeyboardButton(text="🏅 Att ball", callback_data=f"pedit_attpts_{event_id}")],
+        [InlineKeyboardButton(text="📋 Holat", callback_data=f"pedit_status_{event_id}")],
+        [InlineKeyboardButton(text="📷 Check-in", callback_data=f"pedit_checkin_{event_id}")],
+    ]
+    return InlineKeyboardMarkup(inline_keyboard=kb)
+
+@admin_router.message(Command("edit_my_event"))
+async def cmd_edit_my_event(message: Message):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']): 
+        return
+    user = await get_user_by_tg_id(message.from_user.id)
+    if not user:
+        return
+
+    if user.role.value in ('PRESIDENT', 'VP') and user.club_id:
+        events = await get_events_by_club(user.club_id)
+    else:
+        events = await get_active_events(limit=20)
+
+    if not events:
+        return await message.answer("Tahrirlash uchun tadbirlar topilmadi.")
+
+    text = "✏️ <b>Tahrirlash uchun tadbirni tanlang:</b>\n\n"
+    kb = []
+    for event in events:
+        text += f"📅 {html.escape(event.title)} (ID: {event.id})\n"
+        kb.append([InlineKeyboardButton(
+            text=f"✏️ {event.title}",
+            callback_data=f"president_edit_event_{event.id}"
+        )])
+    await message.answer(text, parse_mode="HTML", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+
+
+@admin_router.callback_query(F.data.startswith("president_edit_event_"))
+async def president_edit_event_show(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+
+    event_id = int(call.data.split("_")[-1])
+    event = await get_event_by_id(event_id)
+    if not event:
+        return await call.message.answer("Tadbir topilmadi.")
+
+    user = await get_user_by_tg_id(call.from_user.id)
+    if user and user.role.value in ('PRESIDENT', 'VP'):
+        if user.club_id != event.club_id:
+            return await call.message.answer("Siz bu tadbirga mas'ul emassiz!")
+
+    check_in_text = "Ha" if event.check_in_enabled else "Yo'q"
+    text = (
+        f"📅 <b>{html.escape(event.title)}</b>\n\n"
+        f"📝 Tavsif: {html.escape(event.description or '-')}\n"
+        f"🔗 Havola: {event.post_link or '-'}\n"
+        f"🎯 Reg ball: {event.registration_points}\n"
+        f"🏅 Att ball: {event.attendance_points}\n"
+        f"📋 Holat: {event.status.value}\n"
+        f"📷 Check-in: {check_in_text}\n\n"
+        f"Qaysi maydonni o'zgartirmoqchisiz?"
+    )
+    await call.message.answer(text, parse_mode="HTML", reply_markup=president_edit_event_keyboard(event_id))
+
+
+@admin_router.callback_query(F.data.startswith("pedit_"))
+async def president_edit_field_start(call: CallbackQuery, state: FSMContext):
+    if not await check_admin(call.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']):
+        return await call.answer("Ruxsat yo'q", show_alert=True)
+    await call.answer()
+
+    parts = call.data.split("_")
+    field = parts[1]
+    event_id = int(parts[2])
+
+    event = await get_event_by_id(event_id)
+    if not event:
+        return await call.message.answer("Tadbir topilmadi.")
+
+    user = await get_user_by_tg_id(call.from_user.id)
+    if user and user.role.value in ('PRESIDENT', 'VP'):
+        if user.club_id != event.club_id:
+            return await call.message.answer("Siz bu tadbirga mas'ul emassiz!")
+
+    await state.update_data(edit_event_id=event_id, edit_field=field)
+
+    field_prompts = {
+        "title": "Yangi sarlavhani kiriting:",
+        "desc": "Yangi tavsifni kiriting:",
+        "link": "Yangi post havolasini kiriting (yoki '-' qoldiring):",
+        "regpts": "Yangi ro'yxatdan o'tish ballini kiriting (raqam):",
+        "attpts": "Yangi davomat ballini kiriting (raqam):",
+        "status": "Yangi holatni kiriting (ACTIVE, COMPLETED, CANCELLED):",
+        "checkin": "Check-in yoqilsinmi? (Ha / Yo'q):",
+    }
+
+    prompt = field_prompts.get(field, "Yangi qiymatni kiriting:")
+    await call.message.answer(f"{prompt} (Bekor qilish: /cancel)")
+    await state.set_state(EditEventState.waiting_for_value)
+
+
+@admin_router.message(EditEventState.waiting_for_value)
+async def president_edit_field_value(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']):
+        return await state.clear()
+    if not message.text:
+        return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi.")
+
+    data = await state.get_data()
+    event_id = data['edit_event_id']
+    field = data['edit_field']
+
+    event = await get_event_by_id(event_id)
+    if not event:
+        await state.clear()
+        return await message.answer("Tadbir topilmadi.")
+
+    user = await get_user_by_tg_id(message.from_user.id)
+    if user and user.role.value in ('PRESIDENT', 'VP'):
+        if user.club_id != event.club_id:
+            await state.clear()
+            return await message.answer("Siz bu tadbirga mas'ul emassiz!")
+
+    field_map = {
+        "title": "title",
+        "desc": "description",
+        "link": "post_link",
+        "regpts": "registration_points",
+        "attpts": "attendance_points",
+        "status": "status",
+        "checkin": "check_in_enabled",
+    }
+
+    db_field = field_map.get(field)
+    if not db_field:
+        await state.clear()
+        return await message.answer("Noto'g'ri maydon.")
+
+    value = message.text.strip()
+
+    if field in ("regpts", "attpts"):
+        try:
+            value = int(value)
+            if value < 0:
+                return await message.answer("Ball manfiy bo'lishi mumkin emas!")
+        except ValueError:
+            return await message.answer("Faqat raqam kiriting!")
+    elif field == "status":
+        value = value.upper()
+        if value not in ('ACTIVE', 'COMPLETED', 'CANCELLED'):
+            return await message.answer("Faqat ACTIVE, COMPLETED, CANCELLED mumkin!")
+        value = EventStatus[value]
+    elif field == "checkin":
+        value = value.lower() in ['ha', 'yes', 'da']
+    elif field == "link":
+        if value == '-':
+            value = None
+
+    success, msg = await update_event_field(event_id, db_field, value)
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ {msg}")
     await state.clear()
 
 

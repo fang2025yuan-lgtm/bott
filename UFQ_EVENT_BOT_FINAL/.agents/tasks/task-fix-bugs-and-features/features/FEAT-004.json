@@ -1,0 +1,30 @@
+{
+  "id": "FEAT-004",
+  "type": "feat",
+  "description": "Add Club Creation with President Assignment and Club President Powers. When creating a club, require president's Telegram ID. Club president can ONLY create/manage events for their own club.",
+  "status": "in_progress",
+  "steps": [
+    "STEP 1 - Update club creation FSM in bot/handlers/admin.py: (a) Add new state to ClubState: waiting_for_president_id. (b) After entering club name, ask for president's Telegram ID. (c) In the president ID handler: validate that the user exists in the system (get_user_by_tg_id), create the club, then set that user's role to PRESIDENT, set their club_id to the new club, and set club.president_id to that user's id. (d) Update create_club() in crud.py to accept president_tg_id parameter.",
+    "STEP 2 - Enforce club president restrictions in bot/handlers/admin.py: (a) In add_event_start (add_new_event callback): For PRESIDENT role, auto-set club_id from their own club. Store it in FSM state. (b) In the final event creation step: If the creator is PRESIDENT, always use their club_id regardless of what create_event would default to. (c) In manage_specific_event: The existing check_admin with club_id_needed already partially enforces this. Verify it works correctly for PRESIDENT users - they should only see/manage events where event.club_id == their club_id.",
+    "STEP 3 - Add club president event management: (a) In bot/handlers/admin.py, add a handler for PRESIDENT to edit their club's events. Add new FSM states: EditEventState with waiting_for_event_id, waiting_for_field, waiting_for_value. (b) President can change: title, description, post_link, registration_points, attendance_points, status (ACTIVE/COMPLETED/CANCELLED), check_in_enabled. (c) Add /edit_event command accessible to VP, PRESIDENT, SUPER_ADMIN. The handler should show only events belonging to the user's club (for PRESIDENT/VP) or all events (for SUPER_ADMIN).",
+    "STEP 4 - Update CRUD for club-scoped operations: (a) In crud.py add get_events_by_club(club_id) function. (b) Add update_event_field(event_id, field_name, value) function for editing individual fields. (c) Update create_club() to accept and process president_tg_id: create club, find user by tg_id, set user.role=PRESIDENT, user.club_id=club.id, club.president_id=user.id.",
+    "STEP 5 - Filter event display for presidents: In show_admin_panel() ('Klub Boshqaruvi' handler): If user is PRESIDENT or VP, only show events for their club_id. Use get_events_by_club() instead of get_active_events(). SUPER_ADMIN sees all events."
+  ],
+  "acceptance_criteria": [
+    "Club creation asks for president Telegram ID and assigns the role",
+    "President user gets PRESIDENT role and is linked to the club",
+    "Club president can only create events under their own club",
+    "Club president can only see/manage events of their own club in 'Klub Boshqaruvi'",
+    "Club president can edit their club's event fields",
+    "Super admin can still create events for any club and manage all events",
+    "get_events_by_club() function exists and works correctly"
+  ],
+  "verification": [
+    "Run: cd /projects/sandbox/bott/UFQ_EVENT_BOT_FINAL && python -m py_compile bot/handlers/admin.py && echo OK",
+    "Run: python -m py_compile bot/database/crud.py && echo OK",
+    "Run: python -c \"from bot.database.crud import get_events_by_club, create_club; print('Imports OK')\"",
+    "Run: python -c \"from bot.handlers.admin import ClubState; assert hasattr(ClubState, 'waiting_for_president_id'); print('PASS')\""
+  ],
+  "blocked_reason": null,
+  "findings": ""
+}
