@@ -83,7 +83,7 @@ async def get_event_by_id(event_id: int):
         result = await session.execute(select(Event).where(Event.id == event_id))
         return result.scalars().first()
 
-async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int):
+async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int, event_date=None, location=None, check_in_enabled=False):
     async with AsyncSessionLocal() as session:
         user_res = await session.execute(select(User).where(User.telegram_id == created_by_tg_id))
         user = user_res.scalars().first()
@@ -98,7 +98,10 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
             club_id=user.club_id,
             registration_points=reg_pts,
             attendance_points=att_pts,
-            created_by=user.id
+            created_by=user.id,
+            event_date=event_date,
+            location=location,
+            check_in_enabled=check_in_enabled
         )
         session.add(new_event)
         await session.commit()
@@ -309,7 +312,7 @@ async def create_ticket(user_tg_id: int, event_id: int):
 async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: int):
     """
     QR kod skanerlash va check-in amalga oshirish
-    Returns: (success: bool, message: str, user_name: str or None)
+    Returns: (success: bool, message: str, user_name: str or None, user_telegram_id: int or None)
     """
     async with AsyncSessionLocal() as session:
         # Scanner vakolatini tekshirish
@@ -317,7 +320,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         scanner = scanner_result.scalars().first()
         
         if not scanner or scanner.role not in [RoleEnum.VP, RoleEnum.PRESIDENT, RoleEnum.SUPER_ADMIN]:
-            return False, "❌ Sizda skanerlash huquqi yo'q!", None
+            return False, "❌ Sizda skanerlash huquqi yo'q!", None, None
         
         # Chiptani topish
         ticket_result = await session.execute(
@@ -329,24 +332,28 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         ticket = ticket_result.scalars().first()
         
         if not ticket:
-            return False, "❌ Noto'g'ri yoki yaroqsiz chipta!", None
+            return False, "❌ Noto'g'ri yoki yaroqsiz chipta!", None, None
         
         # Allaqachon ishlatilganmi?
         if ticket.is_used:
             used_time = ticket.used_at.strftime("%H:%M") if ticket.used_at else "noma'lum vaqt"
-            return False, f"⚠️ Bu chipta allaqachon ishlatilgan!\nSkanerlangan vaqt: {used_time}", None
+            return False, f"⚠️ Bu chipta allaqachon ishlatilgan!\nSkanerlangan vaqt: {used_time}", None, None
         
         # Eventni va foydalanuvchini olish
         event = await session.get(Event, event_id)
         user = await session.get(User, ticket.user_id)
         
         if not event or not user:
-            return False, "❌ Xatolik: Ma'lumot topilmadi", None
+            return False, "❌ Xatolik: Ma'lumot topilmadi", None, None
+        
+        # Check-in yoqilganmi tekshirish
+        if not event.check_in_enabled:
+            return False, "❌ QR skanerlash bu tadbir uchun yoqilmagan!", None, None
         
         # Scanner ushbu klubning admin bo'lishi kerak
         if scanner.role != RoleEnum.SUPER_ADMIN:
             if not event.club_id or scanner.club_id != event.club_id:
-                return False, "❌ Siz bu tadbirni boshqara olmaysiz!", None
+                return False, "❌ Siz bu tadbirni boshqara olmaysiz!", None, None
         
         # Registration ni yangilash
         reg_result = await session.execute(
@@ -358,11 +365,11 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         registration = reg_result.scalars().first()
         
         if not registration:
-            return False, "❌ Foydalanuvchi bu tadbirga ro'yxatdan o'tmagan!", None
+            return False, "❌ Foydalanuvchi bu tadbirga ro'yxatdan o'tmagan!", None, None
         
         # Allaqachon tashrif buyurganmi tekshirish
         if registration.status == RegStatus.ATTENDED:
-            return False, "⚠️ Bu foydalanuvchi allaqachon tashrif buyurgan!", None
+            return False, "⚠️ Bu foydalanuvchi allaqachon tashrif buyurgan!", None, None
         
         # Check-in amalga oshirish
         ticket.is_used = True
@@ -389,7 +396,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         
         success_msg = f"✅ Muvaffaqiyatli!\n\n👤 {user.full_name}\n📅 {event.title}\n🎁 +{event.attendance_points} ball qo'shildi (Jami: {user.total_points}){status_change_msg}"
         
-        return True, success_msg, user.full_name
+        return True, success_msg, user.full_name, user.telegram_id
 
 async def update_user_status_if_needed(user_id: int):
     """Foydalanuvchi statusini yangilash (ball o'zgarsa)"""

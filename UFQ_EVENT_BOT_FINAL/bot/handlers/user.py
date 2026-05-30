@@ -2,7 +2,7 @@ from aiogram import Router, F
 from aiogram.types import Message
 from bot.database.crud import get_top_users, get_user_results, get_user_by_tg_id
 from bot.database.models import RoleEnum
-from bot.utils.status_manager import get_status_emoji, get_status_name_uz, get_status_benefits
+from bot.utils.status_manager import get_status_emoji, get_status_name_uz, get_status_benefits, calculate_user_status
 import html
 
 user_router = Router()
@@ -34,9 +34,11 @@ async def show_my_results(message: Message):
     
     points, attended = await get_user_results(message.from_user.id)
     
-    status_emoji = get_status_emoji(user.user_status)
-    status_name = get_status_name_uz(user.user_status)
-    benefits = get_status_benefits(user.user_status)
+    # Recalculate status from actual points
+    current_status = calculate_user_status(points)
+    status_emoji = get_status_emoji(current_status)
+    status_name = get_status_name_uz(current_status)
+    benefits = get_status_benefits(current_status)
     
     text = f"👤 <b>Sizning Natijalaringiz:</b>\n\n"
     text += f"📛 <b>Ism:</b> {html.escape(user.full_name)}\n"
@@ -46,12 +48,12 @@ async def show_my_results(message: Message):
     text += f"<b>🎁 Imtiyozlar:</b>\n{benefits}\n\n"
     
     # Keyingi statusgacha qancha ball kerakligini ko'rsatish
-    if user.user_status.value == "BRONZE":
-        text += f"<i>Keyingi status (🥈 Kumush) uchun yana {16 - points} ball kerak.</i>"
-    elif user.user_status.value == "SILVER":
-        text += f"<i>Keyingi status (🥇 Oltin) uchun yana {51 - points} ball kerak.</i>"
-    elif user.user_status.value == "GOLD":
-        text += f"<i>Keyingi status (💎 Platinum) uchun yana {121 - points} ball kerak.</i>"
+    if current_status.value == "BRONZE":
+        text += f"<i>Keyingi status (🥈 Kumush) uchun yana {max(0, 16 - points)} ball kerak.</i>"
+    elif current_status.value == "SILVER":
+        text += f"<i>Keyingi status (🥇 Oltin) uchun yana {max(0, 51 - points)} ball kerak.</i>"
+    elif current_status.value == "GOLD":
+        text += f"<i>Keyingi status (💎 Platinum) uchun yana {max(0, 121 - points)} ball kerak.</i>"
     else:
         text += f"<i>🎉 Siz eng yuqori darajada turibsiz!</i>"
     

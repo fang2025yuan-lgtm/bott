@@ -7,6 +7,7 @@ from bot.database.crud import get_active_events, get_event_registrations, mark_a
 from bot.database.models import RegStatus
 from bot.keyboards.menus import admin_events_keyboard, attendance_keyboard
 from bot.config import SUPER_ADMIN_ID
+from datetime import datetime
 import html
 
 admin_router = Router()
@@ -17,6 +18,9 @@ class EventState(StatesGroup):
     waiting_for_link = State()
     waiting_for_reg_pts = State()
     waiting_for_att_pts = State()
+    waiting_for_event_date = State()
+    waiting_for_location = State()
+    waiting_for_check_in = State()
 
 class ClubState(StatesGroup):
     waiting_for_name = State()
@@ -264,21 +268,80 @@ async def add_event_att_pts(message: Message, state: FSMContext):
         if att_pts < 0:
             return await message.answer("⚠️ Ball manfiy bo'lishi mumkin emas. Iltimos, musbat son kiriting.")
         
-        data = await state.get_data()
-        
-        success, msg = await create_event(
-            title=data['title'],
-            desc=data['desc'],
-            link=data['link'],
-            reg_pts=data['reg_pts'],
-            att_pts=att_pts,
-            created_by_tg_id=message.from_user.id
-        )
-        
-        if success:
-            await message.answer(f"✅ {msg}")
-        else:
-            await message.answer(f"❌ Xatolik: {msg}")
-        await state.clear()
+        await state.update_data(att_pts=att_pts)
+        await message.answer("6️⃣ Tadbir sanasi va vaqtini kiriting (Format: DD.MM.YYYY HH:MM) yoki o'tkazib yuborish uchun '-' yozing:")
+        await state.set_state(EventState.waiting_for_event_date)
     except ValueError:
         await message.answer("Iltimos, faqat raqam kiriting!")
+
+@admin_router.message(EventState.waiting_for_event_date)
+async def add_event_date(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']): 
+        await state.clear()
+        return
+    if not message.text: 
+        return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi")
+    
+    if message.text.strip() == '-':
+        event_date = None
+    else:
+        try:
+            event_date = datetime.strptime(message.text.strip(), '%d.%m.%Y %H:%M')
+        except ValueError:
+            return await message.answer("⚠️ Noto'g'ri format! Iltimos DD.MM.YYYY HH:MM formatida kiriting (masalan: 25.01.2025 14:00) yoki '-' bosing.")
+    
+    await state.update_data(event_date=event_date)
+    await message.answer("7️⃣ Tadbir joylashuvini kiriting (yoki o'tkazib yuborish uchun '-' yozing):")
+    await state.set_state(EventState.waiting_for_location)
+
+@admin_router.message(EventState.waiting_for_location)
+async def add_event_location(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']): 
+        await state.clear()
+        return
+    if not message.text: 
+        return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi")
+    
+    location = None if message.text.strip() == '-' else message.text.strip()
+    await state.update_data(location=location)
+    await message.answer("8️⃣ QR skanerlash (check-in) yoqilsinmi? (Ha / Yo'q):")
+    await state.set_state(EventState.waiting_for_check_in)
+
+@admin_router.message(EventState.waiting_for_check_in)
+async def add_event_check_in(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']): 
+        await state.clear()
+        return
+    if not message.text: 
+        return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi")
+    
+    check_in_enabled = message.text.strip().lower() in ['ha', 'yes', 'da']
+    
+    data = await state.get_data()
+    
+    success, msg = await create_event(
+        title=data['title'],
+        desc=data['desc'],
+        link=data['link'],
+        reg_pts=data['reg_pts'],
+        att_pts=data['att_pts'],
+        created_by_tg_id=message.from_user.id,
+        event_date=data.get('event_date'),
+        location=data.get('location'),
+        check_in_enabled=check_in_enabled
+    )
+    
+    if success:
+        await message.answer(f"✅ {msg}")
+    else:
+        await message.answer(f"❌ Xatolik: {msg}")
+    await state.clear()

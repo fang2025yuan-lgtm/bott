@@ -1,4 +1,4 @@
-from aiogram import Router, F
+from aiogram import Router, F, Bot
 from aiogram.types import Message
 from aiogram.filters import Command, CommandStart, CommandObject
 from bot.database.crud import verify_and_checkin, get_user_by_tg_id
@@ -8,7 +8,7 @@ scanner_router = Router()
 logger = logging.getLogger(__name__)
 
 @scanner_router.message(CommandStart(deep_link=True))
-async def handle_deep_link(message: Message, command: CommandObject):
+async def handle_deep_link(message: Message, command: CommandObject, bot: Bot):
     """
     Deep link orqali QR skanerlash
     Format: /start chk_E12_U987654321_S7a8b9
@@ -34,7 +34,7 @@ async def handle_deep_link(message: Message, command: CommandObject):
             user_tg_id = int(user_tg_id_str)
             
             # Check-in amalga oshirish
-            success, msg, user_name = await verify_and_checkin(
+            success, msg, user_name, real_user_tg_id = await verify_and_checkin(
                 security_hash=security_hash,
                 event_id=event_id,
                 scanner_tg_id=message.from_user.id
@@ -46,13 +46,13 @@ async def handle_deep_link(message: Message, command: CommandObject):
                     parse_mode="HTML"
                 )
                 
-                # Foydalanuvchiga xabar yuborish
+                # Foydalanuvchiga xabar yuborish (real ticket owner telegram_id dan foydalanish)
                 try:
-                    user = await get_user_by_tg_id(user_tg_id)
-                    if user:
-                        from bot.main import bot
+                    if real_user_tg_id:
+                        if real_user_tg_id != user_tg_id:
+                            logger.warning(f"URL user_tg_id ({user_tg_id}) does not match ticket owner ({real_user_tg_id})")
                         await bot.send_message(
-                            user_tg_id,
+                            real_user_tg_id,
                             f"🎉 <b>Tabriklaymiz!</b>\n\n{msg}",
                             parse_mode="HTML"
                         )
