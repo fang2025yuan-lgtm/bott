@@ -66,12 +66,29 @@ UFQ_EVENT_BOT_FINAL/
 
 ---
 
-## 🚀 TEZKOR O'RNATISH (1 komanda)
+## 🚀 TEZKOR O'RNATISH
 
-### Serverga kirganingizdan so'ng:
+### Usul 1: Manual (qo'lda ZIP yuklash)
 
 ```bash
-wget -O deploy.sh https://github.com/fang2025yuan-lgtm/bott/raw/main/UFQ_EVENT_BOT_FINAL/deploy_bot.sh && chmod +x deploy.sh && sudo bash deploy.sh
+# 1. Yuklab olish
+wget https://github.com/fang2025yuan-lgtm/bott/raw/main/UFQ_EventBot_PREMIUM_v2.0.zip
+unzip UFQ_EventBot_PREMIUM_v2.0.zip
+cd UFQ_EVENT_BOT_FINAL
+
+# 2. Deploy
+chmod +x deploy_bot.sh
+sudo ./deploy_bot.sh
+
+# 3. Tekshirish
+sudo systemctl status ufq-event-bot
+sudo journalctl -u ufq-event-bot -f
+```
+
+### Usul 2: Avtomatik (1 komanda)
+
+```bash
+wget -O deploy.sh https://github.com/fang2025yuan-lgtm/bott/raw/main/UFQ_EVENT_BOT_FINAL/auto_deploy.sh && chmod +x deploy.sh && sudo bash deploy.sh
 ```
 
 Bu komanda:
