@@ -66,44 +66,29 @@ UFQ_EVENT_BOT_FINAL/
 
 ---
 
-## 🚀 TEZKOR ISHGA TUSHIRISH
+## 🚀 TEZKOR O'RNATISH (1 komanda)
 
-### 1️⃣ Serverga yuklash
-
-```bash
-# Ubuntu Server ga SSH orqali ulanish
-ssh ubuntu@your-server-ip
-
-# Loyihani yuklash
-cd /home/ubuntu
-# Git orqali yoki scp bilan ZIP faylni yuklang
-unzip UFQ_EventBot_FIXED.zip
-cd UFQ_EVENT_BOT_FINAL
-```
-
-### 2️⃣ Deploy skriptni ishga tushirish
+### Serverga kirganingizdan so'ng:
 
 ```bash
-chmod +x deploy_bot.sh
-sudo ./deploy_bot.sh
+wget -O deploy.sh https://github.com/fang2025yuan-lgtm/bott/raw/main/UFQ_EVENT_BOT_FINAL/deploy_bot.sh && chmod +x deploy.sh && sudo bash deploy.sh
 ```
 
-**Skript sizdan so'raydi:**
+Bu komanda:
+1. GitHub dan eng so'nggi versiyani yuklab oladi
+2. Barcha kerakli kutubxonalarni o'rnatadi
+3. Sizdan bot token va sozlamalarni so'raydi
+4. Botni systemd xizmat sifatida ishga tushiradi
 
-1. **Bot Token:**  
-   `@BotFather` dan olingan token  
-   Misol: `1234567890:ABCdefGHIjklMNOpqrsTUVwxyz`
+### Yangilash (update)
 
-2. **SUPER_ADMIN ID:**  
-   O'zingizning Telegram ID raqamingiz  
-   `@userinfobot` ga /start yuboring va ID ni oling  
-   Misol: `123456789`
+Xuddi shu komandani qayta ishga tushiring - eski ma'lumotlar bazasi saqlanib qoladi:
 
-3. **Majburiy kanallar:**  
-   Vergul bilan ajratilgan kanal ID yoki username  
-   Misol: `-1001234567890,@mychannel`
+```bash
+sudo bash /home/ubuntu/UFQ_EVENT_BOT_FINAL/deploy_bot.sh
+```
 
-### 3️⃣ Bot holatini tekshirish
+### Bot holatini tekshirish
 
 ```bash
 # Status
