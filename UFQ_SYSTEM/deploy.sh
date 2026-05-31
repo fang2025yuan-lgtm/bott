@@ -2,11 +2,6 @@
 # ============================================================
 # UFQ UNIFIED SYSTEM - DEPLOY SCRIPT
 # Team Bot + Event Bot (Bitta umumiy ma'lumotlar bazasi)
-#
-# Bu skript ikkala botni avtomatik o'rnatadi:
-#   - UFQ Team Bot (jamoa boshqaruvi)
-#   - UFQ Event Bot (tadbirlar boshqaruvi)
-# Ikkala bot bitta SQLite bazadan foydalanadi.
 # ============================================================
 set -e
 
@@ -17,29 +12,6 @@ echo "================================================="
 echo ""
 
 # ============================================================
-# [1] Foydalanuvchidan ma'lumotlarni so'rash
-# ============================================================
-read -p "1. Team Bot Token: " TEAM_BOT_TOKEN
-read -p "2. Event Bot Token: " EVENT_BOT_TOKEN
-read -p "3. Bosh Prezident / Super Admin Telegram ID: " ADMIN_ID
-read -p "4. Event Bot Username (@ belgisisiz): " BOT_USERNAME
-read -p "5. Majburiy kanallar (vergul bilan, masalan: @kanal1,@kanal2): " CHANNELS
-
-# Kiritilgan ma'lumotlarni tekshirish
-if [ -z "$TEAM_BOT_TOKEN" ] || [ -z "$EVENT_BOT_TOKEN" ] || [ -z "$ADMIN_ID" ]; then
-    echo ""
-    echo "XATOLIK: Barcha maydonlar to'ldirilishi shart!"
-    echo "  - Team Bot Token, Event Bot Token va Admin ID majburiy."
-    exit 1
-fi
-
-# Agar BOT_USERNAME kiritilmagan bo'lsa, standart qiymat
-if [ -z "$BOT_USERNAME" ]; then
-    BOT_USERNAME="ufq_event_bot"
-    echo "   (BOT_USERNAME kiritilmadi, standart: $BOT_USERNAME)"
-fi
-
-# ============================================================
 # O'zgaruvchilar
 # ============================================================
 INSTALL_DIR="/home/ubuntu/UFQ_SYSTEM"
@@ -47,9 +19,24 @@ BACKUP_DIR="/home/ubuntu/ufq_db_backup"
 DB_FILE="$INSTALL_DIR/shared/ufq_system.db"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# ============================================================
+# [1] Sozlamalar - hardcoded (o'zgartirish kerak bo'lsa shu yerda)
+# ============================================================
+TEAM_BOT_TOKEN="8223899663:AAFDn1P_pnPezps4MrYITZNllT5wnNXy_vU"
+EVENT_BOT_TOKEN="8778734617:AAFwyD0q51ddOjXnRnbZxv6jhs2lKXmSQ7Q"
+ADMIN_ID="7829174719"
+BOT_USERNAME="UFQ_JAMOA_BOT"
+CHANNELS="-1003754712535,-1003157594758"
+
+echo ">>> Sozlamalar:"
+echo "   Admin ID: $ADMIN_ID"
+echo "   Bot Username: $BOT_USERNAME"
 echo ""
+
+# ============================================================
+# [1/8] Eski xizmatlarni to'xtatish
+# ============================================================
 echo ">>> [1/8] Eski xizmatlar to'xtatilmoqda..."
-# Avvalgi versiyadan qolgan barcha xizmatlarni to'xtatish va o'chirish
 sudo systemctl stop ufq-bot 2>/dev/null || true
 sudo systemctl stop ufq-event-bot 2>/dev/null || true
 sudo systemctl stop ufq-team-bot 2>/dev/null || true
@@ -60,66 +47,75 @@ sudo rm -f /etc/systemd/system/ufq-bot.service
 sudo rm -f /etc/systemd/system/ufq-event-bot.service
 sudo rm -f /etc/systemd/system/ufq-team-bot.service
 
+# ============================================================
+# [2/8] Bazani zaxiralash
+# ============================================================
 echo ">>> [2/8] Mavjud ma'lumotlar bazasi zaxiralanmoqda..."
-# Zaxira papkasini yaratish
 mkdir -p "$BACKUP_DIR"
 TIMESTAMP=$(date +%Y%m%d_%H%M%S)
 
-# Eski Team Bot bazasini zaxiralash (agar mavjud bo'lsa)
 if [ -f "/home/ubuntu/UFQ_BOT_V9_FINAL/ufq_jamoa.db" ]; then
     cp "/home/ubuntu/UFQ_BOT_V9_FINAL/ufq_jamoa.db" "$BACKUP_DIR/ufq_jamoa_$TIMESTAMP.db"
-    echo "   Zaxira: ufq_jamoa.db -> $BACKUP_DIR/ufq_jamoa_$TIMESTAMP.db"
+    echo "   Zaxira: ufq_jamoa.db"
 fi
-
-# Yangi tizim bazasini zaxiralash (agar mavjud bo'lsa)
 if [ -f "$DB_FILE" ]; then
     cp "$DB_FILE" "$BACKUP_DIR/ufq_system_$TIMESTAMP.db"
-    echo "   Zaxira: ufq_system.db -> $BACKUP_DIR/ufq_system_$TIMESTAMP.db"
+    echo "   Zaxira: ufq_system.db"
 fi
-
-# Eski Event Bot bazasini zaxiralash (agar mavjud bo'lsa)
 if [ -f "/home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db" ]; then
     cp "/home/ubuntu/UFQ_EVENT_BOT_FINAL/ufq_events.db" "$BACKUP_DIR/ufq_events_$TIMESTAMP.db"
-    echo "   Zaxira: ufq_events.db -> $BACKUP_DIR/ufq_events_$TIMESTAMP.db"
+    echo "   Zaxira: ufq_events.db"
 fi
 
+# ============================================================
+# [3/8] Eski fayllarni tozalash
+# ============================================================
 echo ">>> [3/8] Eski fayllar tozalanmoqda..."
-# Eski versiyalarni o'chirish
 sudo rm -rf /home/ubuntu/UFQ_BOT_V9_FINAL
 sudo rm -rf /home/ubuntu/UFQ_EVENT_BOT_FINAL
-sudo rm -rf "$INSTALL_DIR"
 
-echo ">>> [4/8] Yangi tuzilma yaratilmoqda..."
-# Yangi papka tuzilmasini yaratish
-mkdir -p "$INSTALL_DIR/team_bot"
-mkdir -p "$INSTALL_DIR/event_bot"
-mkdir -p "$INSTALL_DIR/shared"
-
-# Skript joylashgan papkadan fayllarni ko'chirish
-cp -r "$SCRIPT_DIR/team_bot/"* "$INSTALL_DIR/team_bot/"
-cp -r "$SCRIPT_DIR/event_bot/"* "$INSTALL_DIR/event_bot/"
-cp "$SCRIPT_DIR/SYSTEM_README.md" "$INSTALL_DIR/" 2>/dev/null || true
-cp "$SCRIPT_DIR/deploy.sh" "$INSTALL_DIR/" 2>/dev/null || true
-
-# Mavjud bazani tiklash (agar zaxira mavjud bo'lsa)
-if [ -f "$BACKUP_DIR/ufq_jamoa_$TIMESTAMP.db" ]; then
-    cp "$BACKUP_DIR/ufq_jamoa_$TIMESTAMP.db" "$DB_FILE"
-    echo "   Mavjud baza tiklandi: ufq_jamoa.db -> ufq_system.db"
-elif [ -f "$BACKUP_DIR/ufq_system_$TIMESTAMP.db" ]; then
-    cp "$BACKUP_DIR/ufq_system_$TIMESTAMP.db" "$DB_FILE"
-    echo "   Mavjud baza tiklandi: ufq_system.db"
+# Agar script INSTALL_DIR ichida bo'lmasa, INSTALL_DIR ni tozalash
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+    sudo rm -rf "$INSTALL_DIR"
 fi
 
+# ============================================================
+# [4/8] Fayllarni joylashtirish
+# ============================================================
+echo ">>> [4/8] Yangi tuzilma yaratilmoqda..."
+mkdir -p "$INSTALL_DIR/shared"
+
+if [ "$SCRIPT_DIR" != "$INSTALL_DIR" ]; then
+    # Script boshqa joyda (masalan unzip qilingan papkada) - ko'chirish kerak
+    cp -r "$SCRIPT_DIR/team_bot" "$INSTALL_DIR/"
+    cp -r "$SCRIPT_DIR/event_bot" "$INSTALL_DIR/"
+    cp "$SCRIPT_DIR/SYSTEM_README.md" "$INSTALL_DIR/" 2>/dev/null || true
+    cp "$SCRIPT_DIR/deploy.sh" "$INSTALL_DIR/" 2>/dev/null || true
+    echo "   Fayllar ko'chirildi: $SCRIPT_DIR -> $INSTALL_DIR"
+else
+    echo "   Fayllar allaqachon to'g'ri joyda."
+fi
+
+# Bazani tiklash
+if [ -f "$BACKUP_DIR/ufq_system_$TIMESTAMP.db" ]; then
+    cp "$BACKUP_DIR/ufq_system_$TIMESTAMP.db" "$DB_FILE"
+    echo "   Baza tiklandi: ufq_system.db"
+elif [ -f "$BACKUP_DIR/ufq_jamoa_$TIMESTAMP.db" ]; then
+    cp "$BACKUP_DIR/ufq_jamoa_$TIMESTAMP.db" "$DB_FILE"
+    echo "   Baza tiklandi: ufq_jamoa.db -> ufq_system.db"
+fi
+
+# ============================================================
+# [5/8] .env fayllar yaratish
+# ============================================================
 echo ">>> [5/8] .env fayllar yaratilmoqda..."
-# Team Bot uchun .env fayl
-cat << EOF > "$INSTALL_DIR/team_bot/.env"
+cat > "$INSTALL_DIR/team_bot/.env" << EOF
 BOT_TOKEN=$TEAM_BOT_TOKEN
 ADMIN_ID=$ADMIN_ID
 DB_PATH=$DB_FILE
 EOF
 
-# Event Bot uchun .env fayl
-cat << EOF > "$INSTALL_DIR/event_bot/.env"
+cat > "$INSTALL_DIR/event_bot/.env" << EOF
 BOT_TOKEN=$EVENT_BOT_TOKEN
 SUPER_ADMIN_ID=$ADMIN_ID
 CHANNELS=$CHANNELS
@@ -127,32 +123,33 @@ BOT_USERNAME=$BOT_USERNAME
 DB_PATH=$DB_FILE
 EOF
 
+# ============================================================
+# [6/8] Python muhiti
+# ============================================================
 echo ">>> [6/8] Python muhiti va paketlar o'rnatilmoqda..."
-# Kerakli tizim paketlarini o'rnatish
-sudo apt-get update -y
-sudo apt-get install -y python3-venv python3-pip redis-server
+sudo apt-get update -y -qq
+sudo apt-get install -y -qq python3-venv python3-pip redis-server
 
-# Redis xizmatini yoqish va ishga tushirish
 sudo systemctl enable redis-server
 sudo systemctl start redis-server
 
-# Team Bot uchun virtual muhit
-echo "   Team Bot paketlari o'rnatilmoqda..."
+echo "   Team Bot paketlari..."
 rm -rf "$INSTALL_DIR/team_bot/venv"
 python3 -m venv "$INSTALL_DIR/team_bot/venv"
-"$INSTALL_DIR/team_bot/venv/bin/pip" install --upgrade pip
-"$INSTALL_DIR/team_bot/venv/bin/pip" install -r "$INSTALL_DIR/team_bot/requirements.txt"
+"$INSTALL_DIR/team_bot/venv/bin/pip" install --upgrade pip -q
+"$INSTALL_DIR/team_bot/venv/bin/pip" install -r "$INSTALL_DIR/team_bot/requirements.txt" -q
 
-# Event Bot uchun virtual muhit
-echo "   Event Bot paketlari o'rnatilmoqda..."
+echo "   Event Bot paketlari..."
 rm -rf "$INSTALL_DIR/event_bot/venv"
 python3 -m venv "$INSTALL_DIR/event_bot/venv"
-"$INSTALL_DIR/event_bot/venv/bin/pip" install --upgrade pip
-"$INSTALL_DIR/event_bot/venv/bin/pip" install -r "$INSTALL_DIR/event_bot/requirements.txt"
+"$INSTALL_DIR/event_bot/venv/bin/pip" install --upgrade pip -q
+"$INSTALL_DIR/event_bot/venv/bin/pip" install -r "$INSTALL_DIR/event_bot/requirements.txt" -q
 
+# ============================================================
+# [7/8] Systemd xizmatlari
+# ============================================================
 echo ">>> [7/8] Systemd xizmatlari sozlanmoqda..."
-# Team Bot systemd xizmati
-cat << EOF | sudo tee /etc/systemd/system/ufq-team-bot.service
+cat << EOF | sudo tee /etc/systemd/system/ufq-team-bot.service > /dev/null
 [Unit]
 Description=UFQ Team Bot
 After=network.target redis-server.service
@@ -169,8 +166,7 @@ Environment=DB_PATH=$DB_FILE
 WantedBy=multi-user.target
 EOF
 
-# Event Bot systemd xizmati
-cat << EOF | sudo tee /etc/systemd/system/ufq-event-bot.service
+cat << EOF | sudo tee /etc/systemd/system/ufq-event-bot.service > /dev/null
 [Unit]
 Description=UFQ Event Bot
 After=network.target
@@ -187,53 +183,49 @@ Environment=DB_PATH=$DB_FILE
 WantedBy=multi-user.target
 EOF
 
-# Systemd yangilash va xizmatlarni ishga tushirish
 sudo systemctl daemon-reload
 sudo systemctl enable ufq-team-bot
 sudo systemctl enable ufq-event-bot
 sudo systemctl restart ufq-team-bot
 sudo systemctl restart ufq-event-bot
 
+# ============================================================
+# [8/8] Tekshirish
+# ============================================================
 echo ">>> [8/8] Tizim tekshirilmoqda..."
 sleep 4
 
 TEAM_OK=false
 EVENT_OK=false
 
-if sudo systemctl is-active --quiet ufq-team-bot; then
-    TEAM_OK=true
-fi
-if sudo systemctl is-active --quiet ufq-event-bot; then
-    EVENT_OK=true
-fi
+if sudo systemctl is-active --quiet ufq-team-bot; then TEAM_OK=true; fi
+if sudo systemctl is-active --quiet ufq-event-bot; then EVENT_OK=true; fi
+
+# Fayl egaligini to'g'rilash
+sudo chown -R ubuntu:ubuntu "$INSTALL_DIR"
 
 echo ""
 echo "========================================================="
 if [ "$TEAM_OK" = true ] && [ "$EVENT_OK" = true ]; then
-    echo " MUVAFFAQIYAT! Ikkala bot ham ishga tushdi!"
+    echo " ✅ MUVAFFAQIYAT! Ikkala bot ham ishga tushdi!"
 elif [ "$TEAM_OK" = true ]; then
-    echo " OGOHLANTIRISH: Team Bot ishlamoqda, lekin Event Bot ishga tushmadi!"
-    echo ""
-    echo " Event Bot xatolik loglari:"
+    echo " ⚠️  Team Bot OK, Event Bot XATOLIK!"
     sudo journalctl -u ufq-event-bot -n 10 --no-pager
 elif [ "$EVENT_OK" = true ]; then
-    echo " OGOHLANTIRISH: Event Bot ishlamoqda, lekin Team Bot ishga tushmadi!"
-    echo ""
-    echo " Team Bot xatolik loglari:"
+    echo " ⚠️  Event Bot OK, Team Bot XATOLIK!"
     sudo journalctl -u ufq-team-bot -n 10 --no-pager
 else
-    echo " XATOLIK! Ikkala bot ham ishga tushmadi!"
+    echo " ❌ XATOLIK! Ikkala bot ham ishga tushmadi!"
     echo ""
-    echo " Team Bot log:"
+    echo " Team Bot:"
     sudo journalctl -u ufq-team-bot -n 10 --no-pager
     echo ""
-    echo " Event Bot log:"
+    echo " Event Bot:"
     sudo journalctl -u ufq-event-bot -n 10 --no-pager
 fi
 echo ""
-echo " O'rnatish joyi: $INSTALL_DIR"
-echo " Ma'lumotlar bazasi: $DB_FILE"
-echo " Zaxira papkasi: $BACKUP_DIR"
+echo " O'rnatish: $INSTALL_DIR"
+echo " Baza: $DB_FILE"
 echo "========================================================="
 echo ""
 echo " Foydali buyruqlar:"
@@ -241,9 +233,4 @@ echo "   sudo systemctl status ufq-team-bot"
 echo "   sudo systemctl status ufq-event-bot"
 echo "   sudo journalctl -u ufq-team-bot -f"
 echo "   sudo journalctl -u ufq-event-bot -f"
-echo "   sudo systemctl restart ufq-team-bot"
-echo "   sudo systemctl restart ufq-event-bot"
 echo "========================================================="
-
-# Fayl egaligini to'g'rilash
-sudo chown -R ubuntu:ubuntu "$INSTALL_DIR"
