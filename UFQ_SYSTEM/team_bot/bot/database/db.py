@@ -35,19 +35,19 @@ async def init_db():
             await db.execute("ALTER TABLE users ADD COLUMN total_points INTEGER DEFAULT 0")
             await db.commit()
         except Exception as e:
-            logger.error(f"Migration total_points: {e}")
+            logger.debug(f"Migration total_points: {e}")
 
         try:
             await db.execute("ALTER TABLE users ADD COLUMN user_status TEXT DEFAULT 'BRONZE'")
             await db.commit()
         except Exception as e:
-            logger.error(f"Migration user_status: {e}")
+            logger.debug(f"Migration user_status: {e}")
 
         try:
             await db.execute("ALTER TABLE users ADD COLUMN username TEXT")
             await db.commit()
         except Exception as e:
-            logger.error(f"Migration username: {e}")
+            logger.debug(f"Migration username: {e}")
 
         # Create event bot tables
         await db.execute('''CREATE TABLE IF NOT EXISTS events (
@@ -287,12 +287,16 @@ async def use_invite(code: str):
 async def use_invite_atomic(code: str):
     """Atomically mark invite as used and return its data. Returns None if already used."""
     async with get_db() as db:
-        cursor = await db.execute(
-            "UPDATE invites SET is_used = 1 WHERE code = ? AND is_used = 0 RETURNING *",
-            (code,)
+        # First get the invite data
+        async with db.execute("SELECT * FROM invites WHERE code = ? AND is_used = 0", (code,)) as cursor:
+            row = await cursor.fetchone()
+        if not row:
+            return None
+        # Atomically mark as used (only succeeds if still is_used=0)
+        update_cursor = await db.execute(
+            "UPDATE invites SET is_used = 1 WHERE code = ? AND is_used = 0", (code,)
         )
-        row = await cursor.fetchone()
-        if row:
+        if update_cursor.rowcount > 0:
             await db.commit()
             return row
         return None

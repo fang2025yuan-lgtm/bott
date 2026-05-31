@@ -451,27 +451,23 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         registration.check_in_time = datetime.utcnow()
         await session.commit()
 
-    # Update points in shared table
+    # Update points and status in shared table (single connection for atomicity)
     old_points = user_data.get('total_points', 0)
     new_points = old_points + event.attendance_points
+    old_status = user_data.get('user_status', 'BRONZE')
+    new_status = calculate_user_status(new_points)
 
     async with get_db() as db:
         await db.execute(
             "UPDATE users SET total_points = total_points + ? WHERE id=?",
             (event.attendance_points, ticket.user_id)
         )
-        await db.commit()
-
-    # Update status
-    old_status = user_data.get('user_status', 'BRONZE')
-    new_status = calculate_user_status(new_points)
-    if old_status != new_status:
-        async with get_db() as db:
+        if old_status != new_status:
             await db.execute(
                 "UPDATE users SET user_status=? WHERE id=?",
                 (new_status, ticket.user_id)
             )
-            await db.commit()
+        await db.commit()
 
     # Status change message
     status_change_msg = ""
