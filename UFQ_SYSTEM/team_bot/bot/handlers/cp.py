@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import uuid
 import html
+import logging
 
 from bot.database.db import (get_user, create_role, get_roles, create_task, create_invite, 
                              get_club_members, get_cp_created_tasks, approve_submission, 
@@ -12,6 +13,7 @@ from bot.keyboards.inline import (cp_roles_keyboard, roles_invite_keyboard, memb
                                   target_cp_group_keyboard, role_manage_keyboard)
 
 cp_router = Router()
+logger = logging.getLogger(__name__)
 
 class CPState(StatesGroup):
     add_role = State()
@@ -130,7 +132,7 @@ async def process_cp_broadcast(message: Message, state: FSMContext):
         try:
             await message.bot.send_message(m['telegram_id'], f"📢 <b>Prezidentdan xabar:</b>\n\n{safe_text}", parse_mode="HTML")
             sent += 1
-        except Exception: pass
+        except Exception as e: logger.error(f"Broadcast xabari yuborishda xatolik ({m['telegram_id']}): {e}")
     await message.answer(f"✅ Xabar {sent} ta a'zoga yuborildi.")
     await state.clear()
 
@@ -207,10 +209,10 @@ async def cp_task_desc(message: Message, state: FSMContext):
         for m in members:
             if m['telegram_id'] == user['telegram_id']: continue
             try: await message.bot.send_message(m['telegram_id'], f"🔔 <b>Yangi Topshiriq:</b> {safe_title}", parse_mode="HTML")
-            except Exception: pass
+            except Exception as e: logger.error(f"Topshiriq bildirishnomasi xatolik ({m['telegram_id']}): {e}")
     else:
         try: await message.bot.send_message(tgt_id, f"🔔 <b>Sizga Shaxsiy Topshiriq:</b> {safe_title}", parse_mode="HTML")
-        except Exception: pass
+        except Exception as e: logger.error(f"Shaxsiy topshiriq bildirishnomasi xatolik ({tgt_id}): {e}")
 
     await message.answer("✅ Topshiriq saqlandi va bildirishnoma yuborildi!")
     await state.clear()
@@ -232,12 +234,12 @@ async def review_sub(call: CallbackQuery):
         if success:
             await call.message.edit_text(call.message.text + "\n\n✅ <b>Qabul qilindi va 10 ball berildi!</b>", parse_mode="HTML")
             try: await call.bot.send_message(telegram_id, "🎉 Topshirig'ingiz Prezident tomonidan QABUL QILINDI! (+10 ball)")
-            except Exception: pass
+            except Exception as e: logger.error(f"Tasdiqlash xabari yuborishda xatolik ({telegram_id}): {e}")
         else:
             await call.answer("Allaqachon tekshirilgan!", show_alert=True)
     else:
         await reject_submission(sub_id)
         await call.message.edit_text(call.message.text + "\n\n❌ <b>Rad etildi!</b>", parse_mode="HTML")
         try: await call.bot.send_message(telegram_id, "⚠️ Topshirig'ingiz Rad Etildi. Qayta urinib ko'ring (Mening Topshiriqlarim qismidan).")
-        except Exception: pass
+        except Exception as e: logger.error(f"Rad etish xabari yuborishda xatolik ({telegram_id}): {e}")
     await call.answer()

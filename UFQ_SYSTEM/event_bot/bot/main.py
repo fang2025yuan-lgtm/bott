@@ -1,6 +1,8 @@
 import asyncio
 import logging
 from aiogram import Bot, Dispatcher
+from aiogram.client.default import DefaultBotProperties
+from aiogram.enums import ParseMode
 from bot.config import BOT_TOKEN
 from bot.database.db import init_db
 from bot.handlers.start import start_router
@@ -29,7 +31,7 @@ async def main():
     logger.info("Database tayyor.")
 
     # Bot va Dispatcher yaratish
-    bot = Bot(token=BOT_TOKEN, parse_mode="HTML")
+    bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode=ParseMode.HTML))
     dp = Dispatcher()
 
     # Middleware ulash

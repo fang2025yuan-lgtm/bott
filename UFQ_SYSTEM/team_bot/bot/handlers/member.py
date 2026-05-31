@@ -3,11 +3,13 @@ from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import html
+import logging
 
 from bot.database.db import get_user_full, get_member_tasks, get_task, submit_task, get_leaderboard, get_user, get_cp_of_club
 from bot.keyboards.inline import member_tasks_keyboard, task_action_keyboard, review_submission_keyboard
 
 member_router = Router()
+logger = logging.getLogger(__name__)
 
 class MemberState(StatesGroup):
     send_message = State()
@@ -79,7 +81,7 @@ async def process_submit_task(message: Message, state: FSMContext):
                         parse_mode="HTML",
                         reply_markup=review_submission_keyboard(sub_id, user['telegram_id'])
                     )
-                except Exception: pass
+                except Exception as e: logger.error(f"Topshiriq javobi xabari yuborishda xatolik: {e}")
     finally:
         await state.clear()
 
@@ -115,7 +117,9 @@ async def process_msg_cp(message: Message, state: FSMContext):
                 safe_text = html.escape(message.text)
                 await message.bot.send_message(cp_id, f"📩 <b>A'zodan xat:</b>\nKimdan: {html.escape(user['full_name'])}\n\nXabar: {safe_text}", parse_mode="HTML")
                 await message.answer("✅ Xabar Prezidentga yuborildi!")
-            except Exception: await message.answer("Xatolik: Prezident botni bloklagan bo'lishi mumkin.")
+            except Exception as e:
+                logger.error(f"Prezidentga xat yuborishda xatolik: {e}")
+                await message.answer("Xatolik: Prezident botni bloklagan bo'lishi mumkin.")
         else: await message.answer("Klubingizda hozircha Prezident yo'q.")
     finally:
         await state.clear()

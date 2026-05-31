@@ -4,6 +4,7 @@ from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 import uuid
 import html
+import logging
 from bot.config import ADMIN_ID
 from bot.database.db import (get_all_clubs, get_club_members, kick_user, get_all_users, 
                              get_all_cps, create_task, update_club_name, delete_club, 
@@ -14,6 +15,8 @@ from bot.keyboards.inline import (clubs_inline_keyboard, clubs_invite_keyboard, 
 admin_router = Router()
 admin_router.message.filter(F.from_user.id == ADMIN_ID)
 admin_router.callback_query.filter(F.from_user.id == ADMIN_ID)
+
+logger = logging.getLogger(__name__)
 
 class AdminState(StatesGroup):
     broadcast_msg = State()
@@ -43,7 +46,7 @@ async def bp_kick_member(call: CallbackQuery):
     await call.answer("A'zo o'chirildi!", show_alert=True)
     await call.message.delete()
     try: await call.bot.send_message(user_id, "⛔ Siz UFQ tizimidan chetlashtirildingiz.")
-    except Exception: pass
+    except Exception as e: logger.error(f"Kick xabari yuborishda xatolik: {e}")
 
 @admin_router.message(F.text == "📢 Xabar yuborish")
 async def bp_broadcast(message: Message, state: FSMContext):
@@ -74,7 +77,7 @@ async def process_bp_msg(message: Message, state: FSMContext):
         try:
             await message.bot.send_message(uid, f"📢 <b>Bosh Prezidentdan xabar:</b>\n\n{safe_text}", parse_mode="HTML")
             sent += 1
-        except Exception: pass
+        except Exception as e: logger.error(f"Broadcast xabari yuborishda xatolik ({uid}): {e}")
     await message.answer(f"✅ Xabar {sent} ta foydalanuvchiga yuborildi.")
     await state.clear()
 
@@ -116,7 +119,7 @@ async def bp_task_desc(message: Message, state: FSMContext):
     for uid in users:
         if uid == ADMIN_ID: continue
         try: await message.bot.send_message(uid, f"🔔 <b>Yangi Topshiriq (BP):</b> {safe_title}", parse_mode="HTML")
-        except Exception: pass
+        except Exception as e: logger.error(f"Topshiriq bildirishnomasi yuborishda xatolik ({uid}): {e}")
     await message.answer("✅ Topshiriq muvaffaqiyatli saqlandi va hammaga bildirishnoma yuborildi!")
     await state.clear()
 

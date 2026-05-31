@@ -20,13 +20,20 @@ DB_FILE="$INSTALL_DIR/shared/ufq_system.db"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 # ============================================================
-# [1] Sozlamalar - hardcoded (o'zgartirish kerak bo'lsa shu yerda)
+# [1] Sozlamalar - foydalanuvchidan so'rash
 # ============================================================
-TEAM_BOT_TOKEN="8223899663:AAFDn1P_pnPezps4MrYITZNllT5wnNXy_vU"
-EVENT_BOT_TOKEN="8778734617:AAFwyD0q51ddOjXnRnbZxv6jhs2lKXmSQ7Q"
-ADMIN_ID="7829174719"
-BOT_USERNAME="UFQ_JAMOA_BOT"
-CHANNELS="-1003754712535,-1003157594758"
+echo "Iltimos, quyidagi ma'lumotlarni kiriting:"
+echo ""
+read -p "Team Bot Token: " TEAM_BOT_TOKEN
+read -p "Event Bot Token: " EVENT_BOT_TOKEN
+read -p "Admin Telegram ID: " ADMIN_ID
+read -p "Bot Username (masalan: UFQ_JAMOA_BOT): " BOT_USERNAME
+read -p "Kanal IDlari (vergul bilan ajrating, masalan: -100123,-100456): " CHANNELS
+
+if [ -z "$TEAM_BOT_TOKEN" ] || [ -z "$EVENT_BOT_TOKEN" ] || [ -z "$ADMIN_ID" ]; then
+    echo "XATOLIK: TEAM_BOT_TOKEN, EVENT_BOT_TOKEN va ADMIN_ID majburiy!"
+    exit 1
+fi
 
 echo ">>> Sozlamalar:"
 echo "   Admin ID: $ADMIN_ID"

@@ -45,8 +45,7 @@ async def handle_deep_link(message: Message, command: CommandObject):
                 try:
                     user = await get_user_by_tg_id(user_tg_id)
                     if user:
-                        from bot.main import bot
-                        await bot.send_message(
+                        await message.bot.send_message(
                             user_tg_id,
                             f"<b>Tabriklaymiz!</b>\n\n{msg}",
                             parse_mode="HTML"
@@ -88,8 +87,7 @@ async def my_tickets_command(message: Message):
     from bot.database.db import AsyncSessionLocal
     from sqlalchemy.future import select
     from bot.database.models import Ticket, Event
-    import aiosqlite
-    from bot.config import DB_PATH
+    from bot.database.crud import get_db
 
     user = await get_user_by_tg_id(message.from_user.id)
     if not user:
@@ -110,8 +108,7 @@ async def my_tickets_command(message: Message):
         # Get club name
         club_name = "UFQ Community"
         if user.get('club_id'):
-            async with aiosqlite.connect(DB_PATH) as db:
-                db.row_factory = aiosqlite.Row
+            async with get_db() as db:
                 cursor = await db.execute(
                     "SELECT name FROM clubs WHERE id=?", (user['club_id'],)
                 )

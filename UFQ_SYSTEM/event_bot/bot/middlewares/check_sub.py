@@ -78,11 +78,7 @@ class CheckSubMiddleware(BaseMiddleware):
         # Agar foydalanuvchi "check_sub" bosganda va hamma kanalga a'zo bo'lsa
         if isinstance(event, CallbackQuery) and event.data == "check_sub":
             await event.message.delete()
-            await event.answer("Tasdiqlandi! Endi botdan foydalana olasiz.", show_alert=True)
-            from bot.handlers.start import cmd_start
-            from aiogram.fsm.context import FSMContext
-            state: FSMContext = data['state']
-            await cmd_start(event.message, state)
+            await event.answer("Tasdiqlandi! Endi /start bosing.", show_alert=True)
             return
 
         return await handler(event, data)

@@ -1,4 +1,5 @@
 import aiosqlite
+from contextlib import asynccontextmanager
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc
@@ -14,6 +15,18 @@ from bot.config import DB_PATH, SUPER_ADMIN_ID
 logger = logging.getLogger(__name__)
 
 
+@asynccontextmanager
+async def get_db():
+    db = await aiosqlite.connect(DB_PATH)
+    try:
+        await db.execute("PRAGMA busy_timeout=5000")
+        await db.execute("PRAGMA foreign_keys=ON")
+        db.row_factory = aiosqlite.Row
+        yield db
+    finally:
+        await db.close()
+
+
 def get_db_path():
     return DB_PATH
 
@@ -22,8 +35,7 @@ def get_db_path():
 
 async def get_user_by_tg_id(telegram_id: int):
     """Get user from shared users table via raw aiosqlite. Returns dict or None."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
         row = await cursor.fetchone()
         if row is None:
@@ -33,8 +45,7 @@ async def get_user_by_tg_id(telegram_id: int):
 
 async def create_user(telegram_id: int, full_name: str, username: str = None, club_id: int = None):
     """Create or update user in shared users table via raw aiosqlite."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute("SELECT * FROM users WHERE telegram_id=?", (telegram_id,))
         existing = await cursor.fetchone()
 
@@ -64,8 +75,7 @@ async def create_user(telegram_id: int, full_name: str, username: str = None, cl
 
 async def get_all_clubs():
     """Get all clubs from shared clubs table via raw aiosqlite. Returns list of dicts."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute("SELECT id, name FROM clubs")
         rows = await cursor.fetchall()
         return [dict(row) for row in rows]
@@ -73,8 +83,7 @@ async def get_all_clubs():
 
 async def is_user_president(telegram_id: int) -> bool:
     """Check if user has is_cp=1 in shared users table."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute(
             "SELECT is_cp FROM users WHERE telegram_id=?", (telegram_id,)
         )
@@ -130,42 +139,63 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
 # --- REGISTRATION & LEADERBOARD FUNCTIONS ---
 
 async def register_user_for_event(user_tg_id: int, event_id: int):
-    """Register user for event. User data from shared table, registration in SQLAlchemy."""
-    user = await get_user_by_tg_id(user_tg_id)
-    if not user:
-        return False, "Foydalanuvchi topilmadi"
+    """Register user for event atomically using a single DB connection."""
+    async with get_db() as db:
+        # Get user
+        cursor = await db.execute("SELECT * FROM users WHERE telegram_id=?", (user_tg_id,))
+        user = await cursor.fetchone()
+        if not user:
+            return False, "Foydalanuvchi topilmadi"
+        user = dict(user)
 
-    async with AsyncSessionLocal() as session:
-        event = await session.get(Event, event_id)
-        if not event or event.status != EventStatus.ACTIVE:
+        # Get event
+        cursor = await db.execute(
+            "SELECT * FROM events WHERE id=? AND status='ACTIVE'",
+            (event_id,)
+        )
+        event = await cursor.fetchone()
+        if not event:
             return False, "Tadbir topilmadi yoki yopilgan."
+        event = dict(event)
 
-        try:
-            new_reg = Registration(user_id=user['id'], event_id=event_id)
-            session.add(new_reg)
-            await session.commit()
-        except IntegrityError:
-            await session.rollback()
+        # Check if already registered
+        cursor = await db.execute(
+            "SELECT id FROM registrations WHERE user_id=? AND event_id=?",
+            (user['id'], event_id)
+        )
+        existing = await cursor.fetchone()
+        if existing:
             return False, "Allaqachon ro'yxatdan o'tgansiz!"
 
-    # Update total_points in shared table via raw query
-    async with aiosqlite.connect(DB_PATH) as db:
+        # Insert registration
         await db.execute(
-            "UPDATE users SET total_points = total_points + ? WHERE telegram_id=?",
-            (event.registration_points, user_tg_id)
+            "INSERT INTO registrations (user_id, event_id, status, reg_date) VALUES (?, ?, 'REGISTERED', ?)",
+            (user['id'], event_id, datetime.utcnow().isoformat())
         )
+
+        # Update total_points
+        new_points = user['total_points'] + event['registration_points']
+        await db.execute(
+            "UPDATE users SET total_points = ? WHERE telegram_id=?",
+            (new_points, user_tg_id)
+        )
+
+        # Recalculate status
+        new_status = calculate_user_status(new_points)
+        if new_status != user['user_status']:
+            await db.execute(
+                "UPDATE users SET user_status=? WHERE telegram_id=?",
+                (new_status, user_tg_id)
+            )
+
         await db.commit()
 
-    # Update user status if needed
-    await update_user_status_if_needed(user_tg_id)
-
-    return True, f"Muvaffaqiyatli! Sizga {event.registration_points} ball qo'shildi."
+    return True, f"Muvaffaqiyatli! Sizga {event['registration_points']} ball qo'shildi."
 
 
 async def get_top_users(limit: int = 10):
     """Get top users from shared table via raw aiosqlite."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute(
             "SELECT telegram_id, full_name, total_points, user_status FROM users WHERE is_bp=0 ORDER BY total_points DESC LIMIT ?",
             (limit,)
@@ -211,8 +241,7 @@ async def get_event_registrations(event_id: int):
     user_ids = [reg.user_id for reg in registrations]
     placeholders = ','.join(['?' for _ in user_ids])
 
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute(
             f"SELECT * FROM users WHERE id IN ({placeholders})", user_ids
         )
@@ -245,8 +274,7 @@ async def mark_attendance(reg_id: int, status: RegStatus):
             return False
 
         # Get user from shared table
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_db() as db:
             cursor = await db.execute("SELECT * FROM users WHERE id=?", (reg.user_id,))
             user_row = await cursor.fetchone()
             if not user_row:
@@ -264,7 +292,7 @@ async def mark_attendance(reg_id: int, status: RegStatus):
 
     # Update points in shared table
     if point_change != 0:
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with get_db() as db:
             await db.execute(
                 "UPDATE users SET total_points = MAX(0, total_points + ?) WHERE id=?",
                 (point_change, reg.user_id)
@@ -282,47 +310,59 @@ async def mark_attendance(reg_id: int, status: RegStatus):
 # --- TICKET FUNCTIONS ---
 
 async def create_ticket(user_tg_id: int, event_id: int):
-    """Create ticket for user. Mix of raw (user data) and SQLAlchemy (ticket creation)."""
+    """Create ticket for user. Mix of raw (user data) and SQLAlchemy (ticket creation).
+    Retries up to 5 times on PIN collision."""
     user = await get_user_by_tg_id(user_tg_id)
     if not user:
         return None, "Foydalanuvchi topilmadi"
 
-    async with AsyncSessionLocal() as session:
-        # Check event exists
-        event = await session.get(Event, event_id)
-        if not event:
-            return None, "Tadbir topilmadi"
+    max_retries = 5
+    for attempt in range(max_retries):
+        async with AsyncSessionLocal() as session:
+            # Check event exists
+            event = await session.get(Event, event_id)
+            if not event:
+                return None, "Tadbir topilmadi"
 
-        # Check if ticket already exists
-        existing = await session.execute(
-            select(Ticket).where(Ticket.user_id == user['id'], Ticket.event_id == event_id)
-        )
-        if existing.scalars().first():
-            return None, "Allaqachon chipta mavjud"
+            # Check if ticket already exists
+            existing = await session.execute(
+                select(Ticket).where(Ticket.user_id == user['id'], Ticket.event_id == event_id)
+            )
+            if existing.scalars().first():
+                return None, "Allaqachon chipta mavjud"
 
-        # Generate PIN and security hash
-        pin = generate_pin()
-        timestamp = datetime.utcnow().isoformat()
-        security_hash = generate_security_hash(user['id'], event_id, pin, timestamp)
-        qr_data = generate_qr_data(event_id, user['telegram_id'], security_hash)
+            # Generate PIN and security hash
+            pin = generate_pin()
+            timestamp = datetime.utcnow().isoformat()
+            security_hash = generate_security_hash(user['id'], event_id, pin, timestamp)
+            qr_data = generate_qr_data(event_id, user['telegram_id'], security_hash)
 
-        # Create ticket
-        ticket = Ticket(
-            user_id=user['id'],
-            event_id=event_id,
-            ticket_pin=pin,
-            security_hash=security_hash,
-            qr_data=qr_data
-        )
-        session.add(ticket)
-        await session.commit()
-        await session.refresh(ticket)
+            # Create ticket
+            ticket = Ticket(
+                user_id=user['id'],
+                event_id=event_id,
+                ticket_pin=pin,
+                security_hash=security_hash,
+                qr_data=qr_data
+            )
+            session.add(ticket)
+            try:
+                await session.commit()
+                await session.refresh(ticket)
+            except IntegrityError:
+                await session.rollback()
+                if attempt < max_retries - 1:
+                    logger.warning(f"PIN collision on attempt {attempt + 1}, retrying...")
+                    continue
+                else:
+                    logger.error("PIN collision: max retries exceeded")
+                    return None, "Chipta yaratishda xatolik (PIN collision). Qayta urinib ko'ring."
+            break
 
     # Get club name from shared table
     club_name = "UFQ Community"
     if user.get('club_id'):
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_db() as db:
             cursor = await db.execute("SELECT name FROM clubs WHERE id=?", (user['club_id'],))
             club_row = await cursor.fetchone()
             if club_row:
@@ -380,8 +420,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
             return False, "Xatolik: Ma'lumot topilmadi", None
 
         # Get ticket owner from shared table
-        async with aiosqlite.connect(DB_PATH) as db:
-            db.row_factory = aiosqlite.Row
+        async with get_db() as db:
             cursor = await db.execute("SELECT * FROM users WHERE id=?", (ticket.user_id,))
             user_row = await cursor.fetchone()
             if not user_row:
@@ -416,7 +455,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
     old_points = user_data.get('total_points', 0)
     new_points = old_points + event.attendance_points
 
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with get_db() as db:
         await db.execute(
             "UPDATE users SET total_points = total_points + ? WHERE id=?",
             (event.attendance_points, ticket.user_id)
@@ -427,7 +466,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
     old_status = user_data.get('user_status', 'BRONZE')
     new_status = calculate_user_status(new_points)
     if old_status != new_status:
-        async with aiosqlite.connect(DB_PATH) as db:
+        async with get_db() as db:
             await db.execute(
                 "UPDATE users SET user_status=? WHERE id=?",
                 (new_status, ticket.user_id)
@@ -454,8 +493,7 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
 
 async def update_user_status_if_needed(telegram_id: int):
     """Update user_status in shared table based on total_points."""
-    async with aiosqlite.connect(DB_PATH) as db:
-        db.row_factory = aiosqlite.Row
+    async with get_db() as db:
         cursor = await db.execute(
             "SELECT total_points, user_status FROM users WHERE telegram_id=?", (telegram_id,)
         )

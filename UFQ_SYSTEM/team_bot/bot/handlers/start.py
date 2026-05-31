@@ -1,7 +1,7 @@
 from aiogram import Router, F
 from aiogram.types import Message
 from aiogram.filters import CommandStart, CommandObject
-from bot.database.db import get_user, get_invite, use_invite, create_user
+from bot.database.db import get_user, use_invite_atomic, create_user
 from bot.config import ADMIN_ID
 from bot.keyboards.reply import bp_main_keyboard, cp_main_keyboard, member_main_keyboard
 
@@ -25,7 +25,7 @@ async def cmd_start(message: Message, command: CommandObject):
         return await message.answer("⛔ Tizimga kirish uchun Taklifnoma (Invite link) kerak.")
 
     invite_code = command.args
-    invite = await get_invite(invite_code)
+    invite = await use_invite_atomic(invite_code)
     
     if not invite:
         return await message.answer("❌ Taklifnoma xato yoki allaqachon ishlatilgan!")
@@ -34,7 +34,6 @@ async def cmd_start(message: Message, command: CommandObject):
     is_cp = True if target_type == 'cp' else False
     
     await create_user(user_id, message.from_user.full_name, club_id, role_id, is_cp)
-    await use_invite(invite_code)
     
     if is_cp: await message.answer("🎉 Siz Klub Prezidenti (CP) etib tayinlandingiz!", reply_markup=cp_main_keyboard())
     else: await message.answer("🎉 UFQ Jamoasiga xush kelibsiz!", reply_markup=member_main_keyboard())
