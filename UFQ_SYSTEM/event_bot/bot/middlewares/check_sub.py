@@ -40,17 +40,37 @@ class CheckSubMiddleware(BaseMiddleware):
         if not_subscribed_channels:
             keyboard = []
             for ch in not_subscribed_channels:
-                ch_str = str(ch)
+                ch_str = str(ch).strip()
                 if ch_str.startswith("@"):
                     url = f"https://t.me/{ch_str.replace('@', '')}"
                     keyboard.append([InlineKeyboardButton(
                         text=f"{ch_str} kanaliga a'zo bo'lish", url=url
                     )])
                 else:
-                    keyboard.append([InlineKeyboardButton(
-                        text=f"Kanal ID: {ch_str} (admindan havola so'rang)",
-                        callback_data="cant_join"
-                    )])
+                    # For numeric IDs, try to get invite link from bot
+                    try:
+                        chat = await bot.get_chat(chat_id=int(ch_str))
+                        if chat.invite_link:
+                            keyboard.append([InlineKeyboardButton(
+                                text=f"{chat.title or 'Kanal'} ga a'zo bo'lish",
+                                url=chat.invite_link
+                            )])
+                        elif chat.username:
+                            keyboard.append([InlineKeyboardButton(
+                                text=f"@{chat.username} kanaliga a'zo bo'lish",
+                                url=f"https://t.me/{chat.username}"
+                            )])
+                        else:
+                            keyboard.append([InlineKeyboardButton(
+                                text=f"{chat.title or 'Kanal'} (admindan havola so'rang)",
+                                callback_data="cant_join"
+                            )])
+                    except Exception as e:
+                        logger.error(f"Kanal ma'lumotini olishda xatolik ({ch_str}): {e}")
+                        keyboard.append([InlineKeyboardButton(
+                            text=f"Majburiy kanal (admindan havola so'rang)",
+                            callback_data="cant_join"
+                        )])
 
             keyboard.append([InlineKeyboardButton(
                 text="A'zo bo'ldim, qayta tekshirish", callback_data="check_sub"

@@ -49,11 +49,14 @@ async def show_my_results(message: Message):
 
     # Show progress to next status
     if user_status == "BRONZE":
-        text += f"<i>Keyingi status (Kumush) uchun yana {16 - points} ball kerak.</i>"
+        remaining = max(0, 16 - points)
+        text += f"<i>Keyingi status (Kumush) uchun yana {remaining} ball kerak.</i>"
     elif user_status == "SILVER":
-        text += f"<i>Keyingi status (Oltin) uchun yana {51 - points} ball kerak.</i>"
+        remaining = max(0, 51 - points)
+        text += f"<i>Keyingi status (Oltin) uchun yana {remaining} ball kerak.</i>"
     elif user_status == "GOLD":
-        text += f"<i>Keyingi status (Platinum) uchun yana {121 - points} ball kerak.</i>"
+        remaining = max(0, 121 - points)
+        text += f"<i>Keyingi status (Platinum) uchun yana {remaining} ball kerak.</i>"
     else:
         text += f"<i>Siz eng yuqori darajada turibsiz!</i>"
 

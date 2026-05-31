@@ -266,7 +266,7 @@ async def add_event_att_pts(message: Message, state: FSMContext):
             return await message.answer("Ball manfiy bo'lishi mumkin emas. Iltimos, musbat son kiriting.")
 
         await state.update_data(att_pts=att_pts)
-        await message.answer("6. Tadbir sanasi va vaqtini kiriting (DD.MM.YYYY HH:MM yoki '-' o'tkazib yuborish):")
+        await message.answer("6. Tadbir sanasi va vaqtini kiriting:\n   - DD.MM.YYYY HH:MM (masalan: 25.01.2025 14:00)\n   - 'bugun HH:MM' (masalan: bugun 18:00)\n   - 'ertaga HH:MM' (masalan: ertaga 14:00)\n   - '-' sanasiz yaratish (istalgan vaqt skanerlash mumkin)")
         await state.set_state(EventState.waiting_for_event_date)
     except ValueError:
         await message.answer("Iltimos, faqat raqam kiriting!")
@@ -283,13 +283,42 @@ async def add_event_date(message: Message, state: FSMContext):
         await state.clear()
         return await message.answer("Bekor qilindi")
 
+    from datetime import datetime, timedelta
+
     event_date = None
-    if message.text.strip() != '-':
+    text = message.text.strip().lower()
+
+    if text == '-':
+        event_date = None
+    elif text.startswith('bugun'):
+        # "bugun 18:00" format
         try:
-            from datetime import datetime
-            event_date = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M")
+            time_part = text.replace('bugun', '').strip()
+            time_obj = datetime.strptime(time_part, "%H:%M")
+            now = datetime.utcnow()
+            event_date = now.replace(hour=time_obj.hour, minute=time_obj.minute, second=0, microsecond=0)
         except ValueError:
-            return await message.answer("Noto'g'ri format! DD.MM.YYYY HH:MM shaklida kiriting (masalan: 25.01.2025 14:00) yoki '-' o'tkazib yuborish:")
+            return await message.answer("Noto'g'ri format! Masalan: bugun 18:00")
+    elif text.startswith('ertaga'):
+        # "ertaga 14:00" format
+        try:
+            time_part = text.replace('ertaga', '').strip()
+            time_obj = datetime.strptime(time_part, "%H:%M")
+            tomorrow = datetime.utcnow() + timedelta(days=1)
+            event_date = tomorrow.replace(hour=time_obj.hour, minute=time_obj.minute, second=0, microsecond=0)
+        except ValueError:
+            return await message.answer("Noto'g'ri format! Masalan: ertaga 14:00")
+    else:
+        try:
+            event_date = datetime.strptime(text, "%d.%m.%Y %H:%M")
+        except ValueError:
+            return await message.answer(
+                "Noto'g'ri format! Quyidagilardan birini kiriting:\n"
+                "- DD.MM.YYYY HH:MM (masalan: 25.01.2025 14:00)\n"
+                "- bugun HH:MM\n"
+                "- ertaga HH:MM\n"
+                "- '-' o'tkazib yuborish"
+            )
 
     await state.update_data(event_date=event_date)
     await message.answer("7. Tadbir joylashuvini kiriting (yoki '-' o'tkazib yuborish):")

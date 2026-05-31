@@ -28,7 +28,8 @@ read -p "Team Bot Token: " TEAM_BOT_TOKEN
 read -p "Event Bot Token: " EVENT_BOT_TOKEN
 read -p "Admin Telegram ID: " ADMIN_ID
 read -p "Bot Username (masalan: UFQ_JAMOA_BOT): " BOT_USERNAME
-read -p "Kanal IDlari (vergul bilan ajrating, masalan: -100123,-100456): " CHANNELS
+read -p "Kanal IDlari [default: -1003754712535,-1003157594758]: " CHANNELS
+CHANNELS=${CHANNELS:--1003754712535,-1003157594758}
 
 if [ -z "$TEAM_BOT_TOKEN" ] || [ -z "$EVENT_BOT_TOKEN" ] || [ -z "$ADMIN_ID" ]; then
     echo "XATOLIK: TEAM_BOT_TOKEN, EVENT_BOT_TOKEN va ADMIN_ID majburiy!"

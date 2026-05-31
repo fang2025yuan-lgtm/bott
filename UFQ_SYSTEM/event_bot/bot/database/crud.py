@@ -3,7 +3,7 @@ from contextlib import asynccontextmanager
 from sqlalchemy.future import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy import desc
-from datetime import datetime
+from datetime import datetime, timedelta
 import logging
 
 from bot.database.models import Event, Registration, Ticket, EventStatus, RegStatus
@@ -420,6 +420,24 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
         event = await session.get(Event, event_id)
         if not event:
             return False, "Xatolik: Ma'lumot topilmadi", None
+
+        # Time-based scan validation
+        if event.event_date:
+            try:
+                if isinstance(event.event_date, str):
+                    event_dt = datetime.fromisoformat(event.event_date)
+                else:
+                    event_dt = event.event_date
+
+                scan_allowed_from = event_dt - timedelta(hours=2)
+                now = datetime.utcnow()
+
+                if now < scan_allowed_from:
+                    formatted_date = event_dt.strftime("%d.%m.%Y %H:%M")
+                    return False, f"Bu tadbir hali boshlanmagan!\nSkanerlash {formatted_date} dan 2 soat oldin boshlanadi.", None
+            except (ValueError, TypeError) as e:
+                logger.warning(f"Event date parsing error: {e}")
+                # If date parsing fails, allow scanning
 
         # Get ticket owner from shared table
         async with get_db() as db:
