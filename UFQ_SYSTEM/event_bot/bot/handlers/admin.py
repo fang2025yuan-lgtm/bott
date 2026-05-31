@@ -22,6 +22,8 @@ class EventState(StatesGroup):
     waiting_for_link = State()
     waiting_for_reg_pts = State()
     waiting_for_att_pts = State()
+    waiting_for_event_date = State()
+    waiting_for_location = State()
 
 
 async def check_admin(user_id: int, allowed_roles: list = None, club_id_needed: int = None):
@@ -65,9 +67,22 @@ async def super_admin_panel(message: Message):
 
 @admin_router.message(F.text == "Klub Boshqaruvi")
 async def show_admin_panel(message: Message):
-    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']):
-        return
+    user = await get_user_by_tg_id(message.from_user.id)
+    if not user:
+        return await message.answer("Siz tizimda ro'yxatdan o'tmagansiz.")
+
+    is_admin = await is_user_admin(message.from_user.id)
+    is_president = await is_user_president(message.from_user.id)
+
+    if not is_admin and not is_president:
+        return await message.answer("Sizda bu funksiya uchun ruxsat yo'q. Faqat klub prezidentlari va adminlar foydalanishi mumkin.")
+
     events = await get_active_events(limit=20)
+
+    # FIX 3: If president (not super admin), only show their club's events
+    if is_president and not is_admin:
+        events = [e for e in events if e.club_id == user.get('club_id')]
+
     if not events:
         await message.answer(
             "Hozircha ochiq tadbirlar yo'q. Yangi tadbir yaratishingiz mumkin:",
@@ -250,21 +265,64 @@ async def add_event_att_pts(message: Message, state: FSMContext):
         if att_pts < 0:
             return await message.answer("Ball manfiy bo'lishi mumkin emas. Iltimos, musbat son kiriting.")
 
-        data = await state.get_data()
-
-        success, msg = await create_event(
-            title=data['title'],
-            desc=data['desc'],
-            link=data['link'],
-            reg_pts=data['reg_pts'],
-            att_pts=att_pts,
-            created_by_tg_id=message.from_user.id
-        )
-
-        if success:
-            await message.answer(f"{msg}")
-        else:
-            await message.answer(f"Xatolik: {msg}")
-        await state.clear()
+        await state.update_data(att_pts=att_pts)
+        await message.answer("6. Tadbir sanasi va vaqtini kiriting (DD.MM.YYYY HH:MM yoki '-' o'tkazib yuborish):")
+        await state.set_state(EventState.waiting_for_event_date)
     except ValueError:
         await message.answer("Iltimos, faqat raqam kiriting!")
+
+
+@admin_router.message(EventState.waiting_for_event_date)
+async def add_event_date(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']):
+        await state.clear()
+        return
+    if not message.text:
+        return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi")
+
+    event_date = None
+    if message.text.strip() != '-':
+        try:
+            from datetime import datetime
+            event_date = datetime.strptime(message.text.strip(), "%d.%m.%Y %H:%M")
+        except ValueError:
+            return await message.answer("Noto'g'ri format! DD.MM.YYYY HH:MM shaklida kiriting (masalan: 25.01.2025 14:00) yoki '-' o'tkazib yuborish:")
+
+    await state.update_data(event_date=event_date)
+    await message.answer("7. Tadbir joylashuvini kiriting (yoki '-' o'tkazib yuborish):")
+    await state.set_state(EventState.waiting_for_location)
+
+
+@admin_router.message(EventState.waiting_for_location)
+async def add_event_location(message: Message, state: FSMContext):
+    if not await check_admin(message.from_user.id, ['VP', 'PRESIDENT', 'SUPER_ADMIN']):
+        await state.clear()
+        return
+    if not message.text:
+        return await message.answer("Matn yuboring (/cancel)")
+    if message.text == '/cancel':
+        await state.clear()
+        return await message.answer("Bekor qilindi")
+
+    location = None if message.text.strip() == '-' else message.text.strip()
+    data = await state.get_data()
+
+    success, msg = await create_event(
+        title=data['title'],
+        desc=data['desc'],
+        link=data['link'],
+        reg_pts=data['reg_pts'],
+        att_pts=data['att_pts'],
+        created_by_tg_id=message.from_user.id,
+        event_date=data.get('event_date'),
+        location=location
+    )
+
+    if success:
+        await message.answer(f"{msg}")
+    else:
+        await message.answer(f"Xatolik: {msg}")
+    await state.clear()

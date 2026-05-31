@@ -114,7 +114,7 @@ async def get_event_by_id(event_id: int):
         return result.scalars().first()
 
 
-async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int):
+async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: int, created_by_tg_id: int, event_date=None, location: str = None):
     """Create event. Gets user info from shared table via raw query."""
     # Get user from shared table
     user = await get_user_by_tg_id(created_by_tg_id)
@@ -129,7 +129,9 @@ async def create_event(title: str, desc: str, link: str, reg_pts: int, att_pts: 
             club_id=user.get('club_id'),
             registration_points=reg_pts,
             attendance_points=att_pts,
-            created_by=user['id']
+            created_by=user['id'],
+            event_date=event_date,
+            location=location
         )
         session.add(new_event)
         await session.commit()
@@ -429,8 +431,9 @@ async def verify_and_checkin(security_hash: str, event_id: int, scanner_tg_id: i
 
         # Check scanner can manage this event (same club or SUPER_ADMIN)
         if not is_admin:
-            if not event.club_id or scanner.get('club_id') != event.club_id:
+            if event.club_id and scanner.get('club_id') != event.club_id:
                 return False, "Siz bu tadbirni boshqara olmaysiz!", None
+            # If event.club_id is None (SUPER_ADMIN created), allow any CP to scan
 
         # Find registration
         reg_result = await session.execute(

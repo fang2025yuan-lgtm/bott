@@ -27,13 +27,13 @@ def generate_qr_data(event_id: int, user_telegram_id: int, security_hash: str):
 def get_status_badge(points: int):
     """Ball asosida status belgisini qaytarish"""
     if points >= 121:
-        return "PLATINUM"
+        return "[PLATINUM]"
     elif points >= 51:
-        return "OLTIN"
+        return "[OLTIN]"
     elif points >= 16:
-        return "KUMUSH"
+        return "[KUMUSH]"
     else:
-        return "BRONZA"
+        return "[BRONZA]"
 
 
 async def generate_ticket_image(
@@ -59,14 +59,20 @@ async def generate_ticket_image(
         y = 50 + i * 80
         draw.line([(0, y), (width, y)], fill=(30, 41, 59), width=1)
 
+    # Shriftlarni yuklash
     try:
-        title_font = ImageFont.load_default()
-        regular_font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
-    except Exception:
-        title_font = ImageFont.load_default()
-        regular_font = ImageFont.load_default()
-        small_font = ImageFont.load_default()
+        title_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf", 28)
+        regular_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 20)
+        small_font = ImageFont.truetype("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", 14)
+    except (IOError, OSError):
+        try:
+            title_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf", 28)
+            regular_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 20)
+            small_font = ImageFont.truetype("/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf", 14)
+        except (IOError, OSError):
+            title_font = ImageFont.load_default()
+            regular_font = ImageFont.load_default()
+            small_font = ImageFont.load_default()
 
     draw.text((40, 30), "UFQ COMMUNITY", font=title_font, fill=accent_color)
     draw.text((40, 55), "TADBIR CHIPTA", font=regular_font, fill=text_color)
